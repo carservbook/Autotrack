@@ -1,3 +1,7 @@
+/* [v2.11.10] تغییر نسبت به v34: CACHE_NAME → v35 + فقط یک افزودنی در صفحهٔ آفلاین:
+   دکمهٔ سوم «باز کردن از آدرس پشتیبان گیتهاب» (https://carservbook.github.io/Autotrack/) —
+   مسیر سومِ کاملاً مستقل (دامنه/زیرساخت دیگر، بدون کلودفلر) برای دستگاه‌هایی که هیچ‌کدام
+   از دو مسیر کلودفلری برایشان باز نمی‌شود. هیچ منطق کش/API/ناوبری/نجات شِل عوض نشده. */
 /* [v2.11.9] تغییر نسبت به v33: CACHE_NAME → v34 + دو فیکسِ «اپ باز نمی‌شود» (FIX N-02):
    ۱) ناوبری‌ها cache-first شدند (stale-while-revalidate): هر بازشدنِ اپی که یک‌بار
       باز شده، همان لحظه از کش باز می‌شود — حتی با اینترنت مرده/فیلترشده — و
@@ -94,7 +98,7 @@
    - خروج امن + سپر تعویض حساب (پچ L-02 — در index.html)
    - تعارض همگام‌سازی + «آخرین همگام‌سازی موفق» (S-03/S-04 — در index.html)
    ============================================================ */
-var CACHE_NAME = 'car-service-cache-gh1';
+var CACHE_NAME = 'car-service-cache-gh2';
 var STATIC_ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './Vazirmatn-var.woff2'];
 var RETRY_TIMEOUT_MS = 8000;
 var NAV_TIMEOUT_MS = 2500;
@@ -115,7 +119,11 @@ function withTimeout(promise, ms){
    به‌جای صفحه خطای پیش‌فرض مرورگر (This site can't be reached).
    [v2.11.9] دکمهٔ دوم: «ورود از مسیر پشتیبان» — ناوبری مستقیم به زیردامنهٔ
    autotrack.carservbook.ir (همان ورکر/اپ). چون دامنه عوض می‌شود، localStorage
-   آن دامنه جدا است و ممکن است یک‌بار ورود بخواهد — آخرین خط دفاع، صادقانه. */
+   آن دامنه جدا است و ممکن است یک‌بار ورود بخواهد — آخرین خط دفاع، صادقانه.
+   [v2.11.10] دکمهٔ سوم: «باز کردن از آدرس پشتیبان گیتهاب» — مسیر سوم کاملاً مستقل
+   (دامنهٔ github.io + زیرساخت Fastly، بدون کلودفلر)؛ برای وقتی که کل رنج
+   آی‌پی کلودفلر در دسترس نیست. دادهٔ آن نسخه جدا ذخیره می‌شود و پل مهاجرت #hb
+   آن را هر وقت اپ اصلی در دسترس شد خودکار به اپ اصلی منتقل می‌کند. */
 function offlineFallback(){
   var html = '<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -127,8 +135,9 @@ function offlineFallback(){
     + '<div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">'
     + '<button onclick="location.reload()" style="background:#4c8dff;color:#fff;border:0;border-radius:10px;padding:10px 28px;font-size:16px">تلاش دوباره</button>'
     + '<button onclick="location.replace(\'https://autotrack.carservbook.ir/\')" style="background:#232931;color:#e8eaed;border:1px solid #3a424c;border-radius:10px;padding:10px 22px;font-size:15px">ورود از مسیر پشتیبان</button>'
+    + '<button onclick="location.replace(\'https://carservbook.github.io/Autotrack/\')" style="background:#1f3d2b;color:#8ee6a8;border:1px solid #2f5c40;border-radius:10px;padding:10px 22px;font-size:15px">باز کردن از آدرس پشتیبان گیتهاب</button>'
     + '</div>'
-    + '<p style="color:#5f6771;font-size:12.5px;margin:18px 0 0;line-height:1.8">«مسیر پشتیبان» همان اپ با همان سرور است؛ فقط ممکن است یک‌بار ورود بخواهد.</p>'
+    + '<p style="color:#5f6771;font-size:12.5px;margin:18px 0 0;line-height:1.8">«مسیر پشتیبان» همان اپ با همان سرور است؛ فقط ممکن است یک‌بار ورود بخواهد.<br>«آدرس گیتهاب» نسخهٔ اضطراری مستقل از سرور اصلی است؛ اطلاعاتش بعداً خودکار به اپ اصلی منتقل می‌شود.</p>'
     + '</div></body></html>';
   return new Response(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 }
