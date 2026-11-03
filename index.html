@@ -49,6 +49,7 @@
    localhost/127.0.0.1/file:// برای تست محلی مستثنا هستند. */
 (function(){
   try{
+    window.__ghGoMain=go; /* [v2.11.11] برای دکمهٔ «بازگشت به اپ اصلی» — تعریف تابع hoisted است */
     var h=location.hostname;
     if(h==='api.carservbook.ir'||h==='localhost'||h==='127.0.0.1'||h==='') return;
     /* [v2.11.3] گیت کاربران نصب‌کرده — قلب راهکار «بدون لطمه»:
@@ -70,8 +71,9 @@
     }catch(e0){}
     var dst='https://api.carservbook.ir';
     var finished=false;
+    var ghWent=false; /* [v2.11.11] گارد مستقل برگشت — finished فقط پنجرهٔ خودکار را می‌بندد */
     function go(){
-      if(finished) return; finished=true;
+      if(ghWent) return; ghWent=true;
       var p={v:1};
       try{ var tk=localStorage.getItem('carlog:token'); if(tk) p.t=tk; }catch(e){}
       try{ var em=localStorage.getItem('carlog:email'); if(em) p.e=em; }catch(e){}
@@ -91,10 +93,47 @@
       try{ frag=btoa(unescape(encodeURIComponent(JSON.stringify(p)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }catch(e2){}
       location.replace(dst+(frag?('#hb='+frag):''));
     }
+    /* [v2.11.11] گیت سلامتِ واقعی API — قبلاً version.json با no-cors صدا زده می‌شد؛
+       اما سرویس‌ورکر اپ اصلی استاتیک‌های same-origin را cache-first جواب می‌دهد، پس این
+       پینگ روی دستگاهِ نصب‌کرده از «کش دیسک» سبز می‌شد و پل فکر می‌کرد سرور سالم است،
+       در حالی که API از شبکه واقعاً جواب نمی‌داد (پرش به اپ اصلی بدون همگام‌سازی).
+       حالا: POST /api/ping با mode:'cors' روی هر دو مسیر — /api/* هرگز کش نمی‌شود
+       (پچ B-01) و فقط پاسخ 200+{"ok":true}یِ واقعی معتبر است؛ وگرنه همین‌جا می‌مانیم. */
     try{
-      fetch(dst+'/version.json',{mode:'no-cors',cache:'no-store'}).then(function(){ go(); }).catch(function(){ finished=true; });
+      var ghClosed=false, ghPending=2;
+      function ghSettle(okFlag){
+        if(ghClosed || finished) return; /* پنجرهٔ برگشت خودکار بسته = فقط دستی */
+        if(okFlag){ ghClosed=true; go(); return; }
+        ghPending--;
+        if(ghPending<=0){ ghClosed=true; finished=true; ghStayNote(); }
+      }
+      function ghStayNote(){
+        /* حالت ماندن: سرور واقعاً در دسترس نیست — نشانگر کوچک + بازگشت دستی */
+        try{
+          if(document.getElementById('ghOfflinePill')) return;
+          var p=document.createElement('div');
+          p.id='ghOfflinePill';
+          var bot='10px';
+          try{ if(document.getElementById('ghBackupBanner')) bot='86px'; }catch(e){}
+          p.style.cssText='position:fixed;left:10px;right:10px;bottom:calc('+bot+' + env(safe-area-inset-bottom,0px));z-index:2147483000;background:#382a10;color:#ffd58a;border:1px solid #7a5c1e;border-radius:12px;padding:9px 12px;font-size:12.5px;line-height:1.9;text-align:center;font-family:inherit';
+          p.innerHTML='سرور اصلی فعلاً در دسترس نیست — نسخهٔ پشتیبان باز مانده است. <button id="ghPillGo" style="background:#2e7d43;color:#fff;border:0;border-radius:8px;padding:5px 12px;font-size:12px;font-family:inherit;margin-inline-start:6px">بازگشت به اپ اصلی</button>';
+          (document.body||document.documentElement).appendChild(p);
+          var b=document.getElementById('ghPillGo');
+          if(b) b.onclick=function(){ try{ if(window.__ghGoMain) window.__ghGoMain(); else location.href='https://api.carservbook.ir/'; }catch(e){} };
+        }catch(e){}
+      }
+      function ghPing(base){
+        var c=new AbortController();
+        var t=setTimeout(function(){ try{ c.abort(); }catch(e){} },4000);
+        return fetch(base+'/api/ping',{method:'POST',mode:'cors',cache:'no-store',signal:c.signal})
+          .then(function(r){ if(!r || !r.ok) throw new Error('http '+r.status); return r.json(); })
+          .then(function(j){ if(!j || j.ok!==true) throw new Error('bad-body'); clearTimeout(t); return true; })
+          .catch(function(){ clearTimeout(t); return false; });
+      }
+      ghPing(dst).then(ghSettle);
+      ghPing('https://autotrack.carservbook.ir').then(ghSettle);
     }catch(e3){ finished=true; return; }
-    setTimeout(function(){ finished=true; },3000);
+    setTimeout(function(){ finished=true; ghStayNote(); },6000);
   }catch(e){}
 })();
 </script>
@@ -812,7 +851,7 @@ body{
     location.replace('/share.html?s='+m8[1]);
   }
 })();
-var APP_VERSION='2.11.10';
+var APP_VERSION='2.11.11';
 /* [v2.11.9] FIX N-02 «اپ باز نمی‌شود» سمت کلاینت در sw.js انجام شده (ناوبری cache-first +
    نجات شِل از مسیر پشتیبان). اینجا فقط: خط «مسیر اتصال» در پروفایل تا وضعیت فیلاور قابل دیدن باشد. */
 /* [v2.6.9] پشتیبانی: ایمیل رسمی تماس — در منو/پروفایل/مودال ورود/درباره و مودال اختلال گوگل استفاده می‌شود */
@@ -4266,11 +4305,15 @@ if('serviceWorker' in navigator){
     var bar=document.createElement('div');
     bar.id='ghBackupBanner';
     bar.style.cssText='position:fixed;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px));z-index:2147483000;background:#1d232a;color:#e8eaed;border:1px solid #3a424c;border-radius:14px;padding:12px 14px;font-size:13px;line-height:1.9;box-shadow:0 8px 28px rgba(0,0,0,.4)';
-    bar.innerHTML='<div style="display:flex;align-items:flex-start;gap:10px"><div style="flex:1"><b style="color:#ffb84c">نسخهٔ پشتیبان اپ</b><br>این آدرس اضطراری است و اطلاعات آن جدا از اپ اصلی ذخیره می‌شود. هر وقت سرور اصلی در دسترس باشد، همین صفحه خودکار به اپ اصلی برمی‌گردد و اطلاعات منتقل می‌شود.</div><button id="ghBannerOk" style="background:#4c8dff;color:#fff;border:0;border-radius:9px;padding:7px 14px;font-size:13px;font-family:inherit;flex-shrink:0;margin-top:6px">فهمیدم</button></div>';
+    bar.innerHTML='<div style="display:flex;align-items:flex-start;gap:10px"><div style="flex:1"><b style="color:#ffb84c">نسخهٔ پشتیبان اپ</b><br>این آدرس اضطراری است و اطلاعات آن جدا از اپ اصلی ذخیره می‌شود. اگر سرور اصلی واقعاً در دسترس باشد، همین صفحه خودکار به اپ اصلی برمی‌گردد؛ وگرنه همین‌جا باز می‌ماند و نشانگر نارنجی پایین صفحه دیده می‌شود.</div><div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;margin-top:6px"><button id="ghBannerOk" style="background:#4c8dff;color:#fff;border:0;border-radius:9px;padding:7px 14px;font-size:13px;font-family:inherit">فهمیدم</button><button id="ghBannerGo" style="background:#2e7d43;color:#fff;border:0;border-radius:9px;padding:7px 14px;font-size:13px;font-family:inherit">بازگشت به اپ اصلی</button></div></div>';
     document.body.appendChild(bar);
     document.getElementById('ghBannerOk').onclick=function(){
       try{ localStorage.setItem('carlog:ghBannerSeen','1'); }catch(e){}
       if(bar.parentNode) bar.parentNode.removeChild(bar);
+    };
+    document.getElementById('ghBannerGo').onclick=function(){
+      try{ localStorage.setItem('carlog:ghBannerSeen','1'); }catch(e){}
+      try{ if(window.__ghGoMain) window.__ghGoMain(); else location.href='https://api.carservbook.ir/'; }catch(e){}
     };
   }catch(e){}
 })();
