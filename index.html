@@ -14,6 +14,8 @@
     if(!m) return;
     var p=JSON.parse(decodeURIComponent(escape(atob(m[1].replace(/-/g,'+').replace(/_/g,'/')))));
     if(!p||p.v!==1) return;
+    /* [v2.11.12] خطای ورود گوگل (برگشت از مسیر back) → toast در بوت اپ */
+    if(p.err){ try{ sessionStorage.setItem('carlog:loginError', String(p.err).slice(0,200)); }catch(e1){} history.replaceState(null,'',location.pathname+location.search); return; }
     /* [ترتیب حیاتی] lastModified «قدیمیِ» این دامنه باید قبل از هر بازنویسی
        خوانده شود — وگرنه گاردِ دادهٔ جلوتر همیشه بی‌اثر می‌شود. */
     var curLm=0;
@@ -36,6 +38,25 @@
     localStorage.setItem('carlog:handoffToast','1');
     localStorage.setItem('carlog:migratedAt',String(Date.now()));
     history.replaceState(null,'',location.pathname+location.search);
+  }catch(e){}
+})();
+</script>
+<script>
+/* [v2.11.12] برداشت نشست پس از بازگشت OAuth — داخل TWA رقص گوگل در Custom Tab
+   (خارج از scope) انجام می‌شود؛ وقتی کاربر آن را می‌بندد و به اپ برمی‌گردد، اگر
+   توکن تازه با #hb= رسیده باشد، صفحه یک‌بار تازه‌سازی می‌شود تا بدون تلاش دوم
+   وارد شود. فقط ۱۰ دقیقهٔ اول بعد از بارگذاری فعال است. */
+(function(){
+  try{
+    if(localStorage.getItem('carlog:token')&&localStorage.getItem('carlog:email')) return;
+    var v2112t0=Date.now();
+    document.addEventListener('visibilitychange',function(){
+      try{
+        if(document.visibilityState!=='visible') return;
+        if(Date.now()-v2112t0>600000) return;
+        if(localStorage.getItem('carlog:token')&&localStorage.getItem('carlog:email')) location.reload();
+      }catch(e){}
+    });
   }catch(e){}
 })();
 </script>
@@ -851,7 +872,7 @@ body{
     location.replace('/share.html?s='+m8[1]);
   }
 })();
-var APP_VERSION='2.11.11';
+var APP_VERSION='2.11.12';
 /* [v2.11.9] FIX N-02 «اپ باز نمی‌شود» سمت کلاینت در sw.js انجام شده (ناوبری cache-first +
    نجات شِل از مسیر پشتیبان). اینجا فقط: خط «مسیر اتصال» در پروفایل تا وضعیت فیلاور قابل دیدن باشد. */
 /* [v2.6.9] پشتیبانی: ایمیل رسمی تماس — در منو/پروفایل/مودال ورود/درباره و مودال اختلال گوگل استفاده می‌شود */
@@ -2754,7 +2775,17 @@ function lastSyncText(){
 function startGoogleLogin(){
   var state=makeOAuthState();
   try{ sessionStorage.setItem('carlog:oauthState', state); }catch(e){}
-  location.href='/api/google-login?state='+state;
+  /* [v2.11.12] فیکس ورود گوگل در TWA و شِل گیتهاب: مسیر OAuth «مطلق» به اورجین فعال
+     API می‌رود (مسیر نسبی روی شِل غیر-API به 404 گیتهاب می‌خورد) و آدرس برگشتِ شِل با
+     back به ورکر داده می‌شود؛ توکن/خطا با #hb= روی همین دامنه ثبت می‌شود. allowlist
+     مقصدهای برگشت سمت ورکر است (ضد open-redirect). */
+  var apiBase=(typeof apiFailoverPreferFallback==='function' && apiFailoverPreferFallback())?API_FALLBACK_BASE:API_BASE;
+  var back='';
+  try{
+    var here=location.origin+(location.pathname||'/');
+    if(here!==apiBase+'/') back='&back='+encodeURIComponent(here);
+  }catch(e){}
+  location.href=apiBase+'/api/google-login?state='+state+back;
 }
 
 function openProfileModal(){
