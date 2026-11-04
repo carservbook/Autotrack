@@ -1,3 +1,6 @@
+/* [v2.11.13] تغییر نسبت به gh4: فقط CACHE_NAME → gh5 — رساندن index.html جدید
+   (سپر ایمنی داده: خودترمیمی بعد از گارد سرور + راهنمای «حساب خالی» + confirmWipe).
+   هیچ منطق کش/پل عوض نشده. */
 /* [v2.11.12] تغییر نسبت به gh3: فقط CACHE_NAME → gh4 — رساندن index.html جدید
    (فیکس ورود گوگل در TWA: مسیر مطلق OAuth + back + بازگشت #hb= به همین شِل).
    هیچ منطق کش/پل عوض نشده. */
@@ -101,7 +104,7 @@
    - خروج امن + سپر تعویض حساب (پچ L-02 — در index.html)
    - تعارض همگام‌سازی + «آخرین همگام‌سازی موفق» (S-03/S-04 — در index.html)
    ============================================================ */
-var CACHE_NAME = 'car-service-cache-gh4';
+var CACHE_NAME = 'car-service-cache-gh5';
 var STATIC_ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './Vazirmatn-var.woff2'];
 var RETRY_TIMEOUT_MS = 8000;
 var NAV_TIMEOUT_MS = 2500;

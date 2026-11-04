@@ -872,7 +872,7 @@ body{
     location.replace('/share.html?s='+m8[1]);
   }
 })();
-var APP_VERSION='2.11.12';
+var APP_VERSION='2.11.13';
 /* [v2.11.9] FIX N-02 «اپ باز نمی‌شود» سمت کلاینت در sw.js انجام شده (ناوبری cache-first +
    نجات شِل از مسیر پشتیبان). اینجا فقط: خط «مسیر اتصال» در پروفایل تا وضعیت فیلاور قابل دیدن باشد. */
 /* [v2.6.9] پشتیبانی: ایمیل رسمی تماس — در منو/پروفایل/مودال ورود/درباره و مودال اختلال گوگل استفاده می‌شود */
@@ -2341,6 +2341,9 @@ function saveCarForm(carId){
 function deleteCar(carId){
   if(!confirm('این ماشین و همه کارهاش حذف بشه؟')) return;
   STATE.cars=STATE.cars.filter(function(c){return c.id!==carId;});
+  /* [v2.11.13] حذفِ آگاهانهٔ آخرین خودرو → پوش خالی بعدی با confirmWipe مجاز می‌شود
+     (گارد سرور empty-wipe-guard بدون این مُهر، پوش خالی را با 409 رد می‌کند) */
+  if(!STATE.cars.length){ try{ WIPE_CONFIRM_AT=Date.now(); }catch(e){} }
   if(STATE.activeCarId===carId){
     STATE.activeCarId = STATE.cars.length ? STATE.cars[0].id : null;
   }
@@ -2445,6 +2448,7 @@ function apiFetch(path, opts){
 }
 
 var SYNC_TIMER=null;
+var WIPE_CONFIRM_AT=0; /* [v2.11.13] مُهر «حذف آگاهانهٔ آخرین خودرو» — فقط ۱۵ دقیقه اعتبار دارد */
 function scheduleCloudSync(){
   if(typeof fetch==='undefined' || !getAuthToken()) return;
   clearTimeout(SYNC_TIMER);
@@ -2465,7 +2469,20 @@ function doCloudPush(allowEmpty, showOk){
   /* [v2.11.7] چیپ «در حال همگام‌سازی» فقط اگر عملیات بیش از ۱.۲ثانیه طول بکشد —
      موفقیت‌های سریع دیگر فلاشِ چیپ نمی‌سازند */
   armBusyChip();
-  return apiFetch('/api/data', {method:'POST', body: JSON.stringify({data: STATE})}).then(function(res){
+  /* [v2.11.13] اگر کاربر همین الان (۱۵ دقیقهٔ اخیر) عمداً آخرین خودرو را حذف کرده،
+     پوش خالی با confirmWipe همراه می‌شود تا گارد سرور (empty-wipe-guard) ردش نکند */
+  var pushBody={data: STATE};
+  try{ if(WIPE_CONFIRM_AT && (Date.now()-WIPE_CONFIRM_AT)<900000){ pushBody.confirmWipe=true; } }catch(e0){}
+  return apiFetch('/api/data', {method:'POST', body: JSON.stringify(pushBody)}).then(function(res){
+    /* [v2.11.13] گارد سرور: پوش خالیِ بدون حذفِ آگاهانه رد شده (409 needConfirm) —
+       این یعنی حالت خالی محلی عمدی نیست؛ خودترمیمی: بکش از سرور، بدون چیپ قرمز و outbox */
+    if(res.status===409 && res.data && res.data.needConfirm){
+      try{ console.warn('[v2.11.13] empty-wipe-guard از سرور — خودترمیمی با پول از سرور'); }catch(e0){}
+      PENDING_OUTBOX=false;
+      try{ clearTimeout(OUTBOX_RETRY_TIMER); }catch(e1){}
+      initCloudSync();
+      return false;
+    }
     if(res.ok && res.data && res.data.updatedAt){
       try{ localStorage.setItem(LAST_MODIFIED_KEY, String(res.data.updatedAt)); }catch(e){}
       /* [L-02 fix v2.6.3] داده الان رسماً به این حساب چسبید — مُهر بزن */
@@ -2706,10 +2723,41 @@ function initCloudSync(){
       return;
     }
     /* هر دو خالی → هیچ کاری نکن (هیچ‌وقت حالتِ خالی را پوش نکن) */
+    v2113EmptyCloudHint(); /* [v2.11.13] راهنمای «داده‌ها به حساب قبلی وصله» */
   }).catch(function(err){
     /* [S-07 fix v2.6.7] خطاها دیگر بی‌صدا قورت داده نمی‌شوند — آفلاین عادی است، باگ نه */
     try{ console.warn('[S-07] initCloudSync failed (offline or bug):', err && err.message); }catch(e){}
   });
+}
+/* ---------- [v2.11.13] راهنمای «حساب خالی» — ریشهٔ ماجرای نصب مجدد TWA ----------
+   سناریو: کاربر اپ/TWA را دوباره نصب می‌کند → حافظهٔ محلی اورجین پاک می‌شود → باید
+   دوباره وارد شود. اگر با «ایمیل/گوگلِ دیگری» وارد شود، اکانتش خالی دیده می‌شود
+   (داده‌ها به حساب قبلی وصله) و فکر می‌کند همه‌چیز پاک شده. این راهنما فقط وقتی
+   نشان داده می‌شود که: وارد شده + سرور خالی + دستگاه خالی؛ و یک‌بار در هر باز شدن اپ. */
+function v2113EmptyCloudHint(){
+  try{
+    if(!getAuthToken()) return;
+    if(STATE && STATE.cars && STATE.cars.length) return;
+    if(PENDING_CONFLICT) return;
+    try{ if(sessionStorage.getItem('carlog:emptyCloudHint')) return; }catch(e1){}
+    try{ sessionStorage.setItem('carlog:emptyCloudHint','1'); }catch(e2){}
+    apiFetch('/api/me', {method:'GET'}).then(function(res){
+      if(!res.ok || !res.data) return;
+      var age=Date.now()-(parseInt(res.data.createdAt,10)||0);
+      if(age>7*86400000){
+        /* حسابت قدیمی است ولی داده‌ای روی سرور نیست → احتمالاً با حساب دیگری وارد شده‌ای */
+        openModal(''
+          +'<h2>🔍 اطلاعاتی روی این حساب پیدا نشد</h2>'
+          +'<p class="sub">حسابت قدیمیه ولی هیچ داده‌ای روی سرور برایش ثبت نشده. داده‌های دفترچه به <b>همان حسابی</b> وصله که قبلاً با آن وارد شده بودی.</p>'
+          +'<p class="sub" style="color:var(--dim)">مثلاً اگر قبلاً با ایمیل دیگری یا با گوگلِ دیگری وارد می‌شدی، با همان وارد شو. اگر عمداً همه‌چیز را پاک کرده بودی، این پیام را نادیده بگیر — هیچ داده‌ای پاک نشده.</p>'
+          +'<div class="modal-actions"><button class="btn primary" onclick="doLogout()">ورود با حساب دیگر</button></div>'
+          +'<div class="modal-actions"><button class="btn ghost" onclick="closeModal()">متوجه شدم</button></div>'
+        );
+      } else if(age>90000){
+        toast('اگه قبلاً با ایمیل یا گوگلِ دیگری وارد می‌شدی، اطلاعات به همان حساب وصله — با همان حساب وارد شو.');
+      }
+    }).catch(function(){});
+  }catch(e){}
 }
 /* ---------- [S-03 fix v2.6.4] تعارض همگام‌سازی: دو نسخهٔ متفاوت — انتخاب کاربر ---------- */
 function showSyncConflictModal(){
@@ -2819,6 +2867,8 @@ function openProfileModal(){
       +'<h2>ورود یا ساخت حساب</h2>'
       +'<p class="sub">اختیاریه — اپ بدون حساب هم کامل کار می‌کنه (فقط روی همین گوشی). اگه حساب بسازی، اطلاعاتت روی سرور هم می‌مونه و روی هر گوشی دیگه‌ای هم با همین ایمیل در دسترسه.</p>'
       +'<div class="modal-actions"><button class="btn google-btn" onclick="startGoogleLogin()">'+iconGoogle()+' ورود سریع با گوگل</button></div>'
+      /* [v2.11.13] آموزش کلیدی — ریشهٔ «اکانت خالی»: داده به حساب قبلی وصله */
+      +'<p class="sub" style="color:var(--dim)">مهم: اطلاعات دفترچه‌ات به همان حسابی وصله که قبلاً با آن وارد شده بودی — بعد از نصب مجدد اپ یا تعویض گوشی، حتماً با همان ایمیل/گوگلِ قبلی وارد شو.</p>'
       +'<div class="or-divider"><span>یا با ایمیل</span></div>'
       +'<div class="field"><label>ایمیل</label><input type="email" id="authEmail" placeholder="you@example.com"></div>'
       +'<div class="field"><label>رمز عبور</label><input type="password" id="authPassword" placeholder="حداقل ۶ کاراکتر"></div>'
