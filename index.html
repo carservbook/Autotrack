@@ -872,7 +872,7 @@ body{
     location.replace('/share.html?s='+m8[1]);
   }
 })();
-var APP_VERSION='2.11.15';
+var APP_VERSION='2.11.16';
 /* [v2.11.9] FIX N-02 «اپ باز نمی‌شود» سمت کلاینت در sw.js انجام شده (ناوبری cache-first +
    نجات شِل از مسیر پشتیبان). اینجا فقط: خط «مسیر اتصال» در پروفایل تا وضعیت فیلاور قابل دیدن باشد. */
 /* [v2.6.9] پشتیبانی: ایمیل رسمی تماس — در منو/پروفایل/مودال ورود/درباره و مودال اختلال گوگل استفاده می‌شود */
@@ -2398,6 +2398,17 @@ function apiFailoverRecord(base){
 function apiFailoverClear(){
   try{ localStorage.removeItem(API_FAILOVER_KEY); }catch(e){}
 }
+/* [v2.11.16] حافظهٔ «آخرین پوشِ موفق» — جدا از پروبِ سبک. پاسخِ سریعِ پروب (GET version.json)
+   لزوماً یعنی پوشِ سنگین (~۱۵۷KB) هم رد می‌شود؟ نه — دقیقاً همین اختلاف باعث تایم‌اوتِ ۴ساعته شد.
+   مقدار: 'primary' | 'fallback' */
+var PUSH_OK_KEY='carlog:pushOkBase';
+function pushOkBase(){
+  try{ var v=localStorage.getItem(PUSH_OK_KEY); return (v==='fallback'||v==='primary')?v:null; }catch(e){ return null; }
+}
+function pushOkRecord(via){
+  try{ localStorage.setItem(PUSH_OK_KEY, via===API_FALLBACK_BASE?'fallback':'primary'); }catch(e){}
+}
+function pushOkClear(){ try{ localStorage.removeItem(PUSH_OK_KEY); }catch(e){} }
 /* [v2.11.5] سقف زمانی برای همهٔ تماس‌های API — دیگر هیچ درخواستی بی‌نهایت معطل نمی‌ماند.
    ریشهٔ «کلی معطلی»: fetch بدون AbortController روی شبکهٔ کند/نیمه‌مرده دقیقه‌ها آویزان می‌ماند
    و کاربر هیچ بازخوردی نمی‌گیرد. حالا بعد از ۲۰ ثانیه درخواست رها می‌شود و خطای TYPEدار
@@ -2433,6 +2444,9 @@ function apiFetch(path, opts){
   if(token) opts.headers['Authorization']='Bearer '+token;
   /* [v2.11.8] انتخاب مسیر اول/دوم + فیلاور فقط روی خطای شبکه (TIMEOUT/TypeError) */
   var first=apiFailoverPreferFallback()?API_FALLBACK_BASE:API_BASE;
+  /* [v2.11.16] ترجیحِ پوش-اثبات‌شده بر رکورد چسبندهٔ پروب */
+  if(opts.preferBase==='fallback'){ first=API_FALLBACK_BASE; }
+  else if(opts.preferBase==='primary'){ first=API_BASE; }
   var second=(first===API_BASE)?API_FALLBACK_BASE:API_BASE;
   /* [v2.11.14] فیل‌اور سریع برای GET — تایم‌اوت تلاش اول ۸ثانیه (به‌جای ۲۰) تا روی شبکه‌های
      ناسازگار، معطلِ مسیر مرده نمانیم؛ تلاش دوم ۱۵ثانیه. POSTها (نوشتن) مثل قبل ۲۰ثانیه. */
@@ -2516,7 +2530,8 @@ function doCloudPush(allowEmpty, showOk){
      پوش خالی با confirmWipe همراه می‌شود تا گارد سرور (empty-wipe-guard) ردش نکند */
   var pushBody={data: STATE};
   try{ if(WIPE_CONFIRM_AT && (Date.now()-WIPE_CONFIRM_AT)<900000){ pushBody.confirmWipe=true; } }catch(e0){}
-  return apiFetch('/api/data', {method:'POST', body: JSON.stringify(pushBody)}).then(function(res){
+  /* [v2.11.16] پنجرهٔ پوش ۶۰ثانیه (به‌جای ۲۰) + شروع از پایهٔ پوش-اثبات‌شده — پینگِ سبک رد می‌شود ولی پوشِ سنگین روی مسیرِ شلوغ به ۲۰ثانیه نمی‌رسد */
+  return apiFetch('/api/data', {method:'POST', body: JSON.stringify(pushBody), timeoutMs:60000, preferBase:pushOkBase()}).then(function(res){
     /* [v2.11.13] گارد سرور: پوش خالیِ بدون حذفِ آگاهانه رد شده (409 needConfirm) —
        این یعنی حالت خالی محلی عمدی نیست؛ خودترمیمی: بکش از سرور، بدون چیپ قرمز و outbox */
     if(res.status===409 && res.data && res.data.needConfirm){
@@ -2547,6 +2562,7 @@ function doCloudPush(allowEmpty, showOk){
       setAccountStamp(getAuthEmail());
       setLastSyncAt(); /* [S-04 fix v2.6.4] نشانگر «آخرین همگام‌سازی موفق» برای پروفایل */
       clearLastSyncErr(); /* [v2.11.15] خطای قبلی حل شد — پاکش کن */
+      pushOkRecord(res.via); /* [v2.11.16] این پایه پوشِ سنگین را کامل کرد */
       PENDING_OUTBOX=false;
       try{ clearTimeout(OUTBOX_RETRY_TIMER); }catch(e1){}
       /* [v2.11.7] موفقیت = ریستِ کامل سیاست آرام */
@@ -2595,7 +2611,7 @@ var RECONCILE_COOLDOWN_MS=60000;
    • اپ در پس‌زمینه (document.hidden): هیچ چیپی اصلاً نشان داده نمی‌شود
    • بک‌آف تلاش مجدد: ۳۰ثانیه → ۱دقیقه → ۲دقیقه → ۴دقیقه → سقف ۸دقیقه؛ با هر موفقیت ریست */
 var SYNC_FAIL_STREAK=0, SYNC_ERR_HIDE_TIMER=null, BUSY_CHIP_TIMER=null;
-var SYNC_RETRY_BASE=30000, SYNC_RETRY_DELAY=30000, SYNC_RETRY_MAX=480000;
+var SYNC_RETRY_BASE=30000, SYNC_RETRY_DELAY=30000, SYNC_RETRY_MAX=300000; /* [v2.11.16] سقف ۸→۵دقیقه */
 function armBusyChip(){
   try{ clearTimeout(BUSY_CHIP_TIMER); }catch(e){}
   BUSY_CHIP_TIMER=setTimeout(function(){ syncChip('busy','در حال همگام‌سازی…'); }, 1200);
@@ -2669,6 +2685,16 @@ function pushFailed(kind, status){
   armOutboxRetry();
   SYNC_FAIL_STREAK++;
   recordLastSyncErr(kind, status);
+  /* [v2.11.16] شکستِ شبکه‌ایِ پوش → حافظهٔ «پوش-اثبات‌شده» باطل + چرخش مسیر:
+     تلاشِ بعدی از مسیرِ دیگر شروع می‌کند تا معطلِ تایم‌اوتِ دوبارهٔ همان مسیر نمانیم.
+     (bad-response/too-large یعنی سرور جواب داده و مسیر زنده است — فقط timeout/network می‌چرخاند) */
+  if(kind==='timeout'||kind==='network'){
+    pushOkClear();
+    try{
+      if(apiFailoverPreferFallback()){ apiFailoverClear(); }
+      else{ apiFailoverRecord('fallback'); }
+    }catch(eFlip){}
+  }
   try{ console.warn('[v2.11.7] sync push failed:', kind, '| streak:', SYNC_FAIL_STREAK); }catch(e0){}
   try{
     if(document.hidden) return; /* اپ در پس‌زمینه است — هیچ چیپی مزاحم کاربر نمی‌شود */
@@ -3196,8 +3222,9 @@ function manualSync(){
     }
     if(!cloudHasCars && localHasCars){
       /* [S-07] سرور خالی است → بازیابی سرور از دستگاه (جهت امن: پر روی خالی) */
-      apiFetch('/api/data', {method:'POST', body: JSON.stringify({data: STATE})}).then(function(res2){
-        if(res2.ok){ setAccountStamp(getAuthEmail()); setLastSyncAt(); toast('همگام‌سازی شد ✓'); resetBtn(true); }
+      /* [v2.11.16] همان پنجرهٔ ۶۰ثانیه‌ای پوش */
+        apiFetch('/api/data', {method:'POST', body: JSON.stringify({data: STATE}), timeoutMs:60000, preferBase:pushOkBase()}).then(function(res2){
+        if(res2.ok){ pushOkRecord(res2.via); setAccountStamp(getAuthEmail()); setLastSyncAt(); toast('همگام‌سازی شد ✓'); resetBtn(true); }
         else { toast('همگام‌سازی ناموفق بود'); resetBtn(false); }
       }).catch(function(){ toast('اتصال برقرار نشد'); resetBtn(false); });
       return;
