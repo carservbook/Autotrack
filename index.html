@@ -872,7 +872,7 @@ body{
     location.replace('/share.html?s='+m8[1]);
   }
 })();
-var APP_VERSION='2.11.13';
+var APP_VERSION='2.11.15';
 /* [v2.11.9] FIX N-02 «اپ باز نمی‌شود» سمت کلاینت در sw.js انجام شده (ناوبری cache-first +
    نجات شِل از مسیر پشتیبان). اینجا فقط: خط «مسیر اتصال» در پروفایل تا وضعیت فیلاور قابل دیدن باشد. */
 /* [v2.6.9] پشتیبانی: ایمیل رسمی تماس — در منو/پروفایل/مودال ورود/درباره و مودال اختلال گوگل استفاده می‌شود */
@@ -2434,17 +2434,60 @@ function apiFetch(path, opts){
   /* [v2.11.8] انتخاب مسیر اول/دوم + فیلاور فقط روی خطای شبکه (TIMEOUT/TypeError) */
   var first=apiFailoverPreferFallback()?API_FALLBACK_BASE:API_BASE;
   var second=(first===API_BASE)?API_FALLBACK_BASE:API_BASE;
-  return apiFetchVia(first, path, opts)['catch'](function(err1){
+  /* [v2.11.14] فیل‌اور سریع برای GET — تایم‌اوت تلاش اول ۸ثانیه (به‌جای ۲۰) تا روی شبکه‌های
+     ناسازگار، معطلِ مسیر مرده نمانیم؛ تلاش دوم ۱۵ثانیه. POSTها (نوشتن) مثل قبل ۲۰ثانیه. */
+  var isGet=(!opts.method || opts.method==='GET');
+  var firstOpts=opts;
+  if(isGet){ firstOpts={}; for(var fk in opts){ firstOpts[fk]=opts[fk]; } firstOpts.timeoutMs=8000; }
+  return apiFetchVia(first, path, firstOpts)['catch'](function(err1){
     var netErr=!!(err1 && (err1.message==='TIMEOUT' || err1.name==='TypeError' || err1.name==='AbortError' || err1.name==='TimeoutError'));
     if(!netErr) throw err1;
     try{ console.warn('[v2.11.8] مسیر اصلی API در دسترس نبود؛ تلاش با مسیر پشتیبان:', second); }catch(e0){}
-    return apiFetchVia(second, path, opts);
+    var secondOpts=opts;
+    if(isGet){ secondOpts={}; for(var sk in opts){ secondOpts[sk]=opts[sk]; } secondOpts.timeoutMs=15000; }
+    return apiFetchVia(second, path, secondOpts);
   }).then(function(res){
     /* [v2.11.8] خودترمیم: هر موفقیت مسیرِ برنده را ثبت/تازه می‌کند؛ موفقیت مسیر اصلی رکورد فیلاور را پاک می‌کند */
     if(res && res.via===API_FALLBACK_BASE){ apiFailoverRecord('fallback'); }
     else if(res && res.via===API_BASE && apiFailoverState()){ apiFailoverClear(); }
     return res;
   });
+}
+
+/* ---------- [v2.11.15] پیش‌پرواز API — مسابقهٔ سریع دو مسیر ----------
+   (v2.11.15: پروب به GET /version.json با mode:'no-cors' رفت — سبک‌تر از POST /api/ping:
+   بدون بدنه و بدون وابستگی به CORS؛ هر پاسخی یعنی «مسیر زنده» و فقط تایم‌اوت/خطای شبکه
+   یعنی «مرده». توجه: GET /api/ping در مرورگر 404 می‌دهد چون آن مسیر فقط POST را می‌پذیرد
+   — برای تست مرورگری از /version.json استفاده کنید.)
+   در بوت / برگشت اینترنت / برگشت به اپ، هر دو مسیر همزمان با سقف ۴ثانیه پینگ می‌شوند
+   و مسیر برنده چسبنده می‌شود (مکانیزم فیلاور موجود) — نتیجه: اولین همگام‌سازی هر
+   نشست دیگر معطل تایم‌اوتِ مسیرِ کند نمی‌ماند. کول‌داون ۶۰ثانیه؛ شکست هر دو = بی‌طرف. */
+var API_PREFLIGHT_INFLIGHT=false, API_PREFLIGHT_LAST=0;
+function apiPreflight(){
+  try{
+    if(API_PREFLIGHT_INFLIGHT || typeof fetch==='undefined') return;
+    var now=Date.now();
+    if(API_PREFLIGHT_LAST && (now-API_PREFLIGHT_LAST)<60000) return;
+    API_PREFLIGHT_LAST=now; API_PREFLIGHT_INFLIGHT=true;
+    var done=0, winner=null;
+    function fin(base){
+      done++;
+      if(base && !winner) winner=base;
+      if(done<2) return;
+      API_PREFLIGHT_INFLIGHT=false;
+      if(winner===API_FALLBACK_BASE){ apiFailoverRecord('fallback'); }
+      else if(winner===API_BASE){ apiFailoverClear(); }
+    }
+    [API_BASE, API_FALLBACK_BASE].forEach(function(base){
+      var ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
+      var timer=setTimeout(function(){ try{ if(ctrl) ctrl.abort(); }catch(e1){} }, 4000);
+      /* [v2.11.15] پروب روی /version.json — هر پاسخی (حتی opaque با no-cors) یعنی مسیر
+         زنده است؛ فقط تایم‌اوت/خطای شبکه یعنی مرده. ?_t= ضدکش. */
+      fetch(base+'/version.json?_t='+Date.now(), {cache:'no-store', mode:'no-cors', signal:ctrl?ctrl.signal:undefined})
+        .then(function(r){ clearTimeout(timer); fin(base); })
+        ['catch'](function(){ clearTimeout(timer); fin(null); });
+    });
+  }catch(e0){ try{ API_PREFLIGHT_INFLIGHT=false; }catch(e1){} }
 }
 
 var SYNC_TIMER=null;
@@ -2483,11 +2526,27 @@ function doCloudPush(allowEmpty, showOk){
       initCloudSync();
       return false;
     }
+    if(res.status===401){
+      /* [v2.11.15] توکن دیگر معتبر نیست (نشست منقضی/حساب حذف‌شده) — به‌جای چیپ قرمزِ
+         بی‌پایان: بستن نشست + پیام روشن؛ همان مسیرِ 401 در همگام‌سازی دستی */
+      clearBusyChip();
+      recordLastSyncErr('auth', 401);
+      PENDING_OUTBOX=false;
+      try{ clearTimeout(OUTBOX_RETRY_TIMER); }catch(e1){}
+      SYNC_FAIL_STREAK=0; SYNC_RETRY_DELAY=SYNC_RETRY_BASE;
+      clearAuth();
+      try{ closeModal(); }catch(e2){}
+      try{ renderApp(); }catch(e3){}
+      syncChip('err','نشست حساب تمام شده — برای همگام‌سازی دوباره وارد حساب شو');
+      toast('نشست حساب تمام شده — دوباره وارد حساب شو');
+      return false;
+    }
     if(res.ok && res.data && res.data.updatedAt){
       try{ localStorage.setItem(LAST_MODIFIED_KEY, String(res.data.updatedAt)); }catch(e){}
       /* [L-02 fix v2.6.3] داده الان رسماً به این حساب چسبید — مُهر بزن */
       setAccountStamp(getAuthEmail());
       setLastSyncAt(); /* [S-04 fix v2.6.4] نشانگر «آخرین همگام‌سازی موفق» برای پروفایل */
+      clearLastSyncErr(); /* [v2.11.15] خطای قبلی حل شد — پاکش کن */
       PENDING_OUTBOX=false;
       try{ clearTimeout(OUTBOX_RETRY_TIMER); }catch(e1){}
       /* [v2.11.7] موفقیت = ریستِ کامل سیاست آرام */
@@ -2498,13 +2557,14 @@ function doCloudPush(allowEmpty, showOk){
       else{ syncChip(null); }
       return true;
     }
-    /* [v2.11.7] پاسخ غیرمنتظرهٔ سرور — از سیاست چیپ آرام می‌گذرد (اولین خطای هر دوره بی‌صدا) */
+    /* [v2.11.7] پاسخ غیرمنتظرهٔ سرور — از سیاست چیپ آرام می‌گذرد (اولین خطای هر دوره بی‌صدا)
+       [v2.11.15] کد HTTP هم ثبت می‌شود (401 بالا جدا هندل می‌شود؛ 413 = حجم داده زیاد) */
     clearBusyChip();
-    pushFailed('bad-response');
+    pushFailed(res.status===413?'too-large':'bad-response', res.status);
     return false;
   })['catch'](function(err){
     clearBusyChip();
-    pushFailed((err && err.message==='TIMEOUT') ? 'timeout' : 'network');
+    pushFailed((err && err.message==='TIMEOUT') ? 'timeout' : 'network', 0);
     return false;
   });
 }
@@ -2543,17 +2603,79 @@ function armBusyChip(){
 function clearBusyChip(){
   try{ clearTimeout(BUSY_CHIP_TIMER); }catch(e){}
 }
-function pushFailed(kind){
+/* ---------- [v2.11.15] تشخیص شفاف sync: علت آخرین شکست + حجم داده + تست اتصال ----------
+   قبلاً چیپ قرمز فقط می‌گفت «ناموفق بود»؛ حالا علت دقیق (تایم‌اوت/قطع شبکه/کد HTTP سرور/
+   حجم داده/نشست منقضی) و زمانش ذخیره می‌شود و در پروفایل + متن چیپ دیده می‌شود —
+   گزارش کاربر = تشخیص فوری، بدون حدس. */
+var LAST_SYNC_ERR_KEY='carlog:lastSyncErr';
+function recordLastSyncErr(kind, status){
+  try{ localStorage.setItem(LAST_SYNC_ERR_KEY, JSON.stringify({k:kind, s:status||0, t:Date.now()})); }catch(e){}
+}
+function clearLastSyncErr(){ try{ localStorage.removeItem(LAST_SYNC_ERR_KEY); }catch(e){} }
+function syncErrShort(kind, status){
+  if(kind==='timeout') return 'تایم‌اوت شبکه';
+  if(kind==='network') return 'قطع اتصال';
+  if(kind==='auth') return 'نشست منقضی';
+  if(kind==='too-large') return 'حجم داده زیاد';
+  return 'خطای سرور'+(status?(' '+toFa(status)):'');
+}
+function lastSyncErrLine(){
+  var e=null;
+  try{ e=JSON.parse(localStorage.getItem(LAST_SYNC_ERR_KEY)||'null'); }catch(e0){}
+  if(!e || !e.k) return '';
+  var t='—';
+  try{ t=new Date(e.t).toLocaleTimeString('fa-IR'); }catch(e1){}
+  return '<p class="sub" style="color:#e5484d">آخرین خطای همگام‌سازی: <b>'+syncErrShort(e.k,e.s)+'</b> — ساعت '+t+'</p>';
+}
+function stateKbLine(){
+  var kb=0;
+  try{ kb=Math.round(JSON.stringify({data:STATE}).length/1024); }catch(e){}
+  return '<p class="sub">حجم دادهٔ همگام‌سازی این دستگاه: <b>'+(kb>0?('~'+toFa(kb)+' کیلوبایت'):'—')+'</b></p>';
+}
+function testConnection(){
+  var box=document.getElementById('connTestResult');
+  if(!box) return;
+  box.innerHTML='<span style="color:var(--dim)">در حال تست هر دو مسیر (سقف ۷ ثانیه)…</span>';
+  var targets=[{n:'اصلی', b:API_BASE},{n:'پشتیبان', b:API_FALLBACK_BASE}];
+  var results=[null,null], done=0;
+  targets.forEach(function(x, i){
+    var t0=performance.now();
+    var ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
+    var timer=setTimeout(function(){ try{ if(ctrl) ctrl.abort(); }catch(e0){} }, 7000);
+    /* [v2.11.15] POST /api/ping با بررسی بدنه {ok:true} — تست واقعی و قابل‌اعتماد
+       (نه فقط «هر پاسخی»)؛ GET /api/ping در مرورگر 404 می‌دهد چون مسیر فقط POST است. */
+    fetch(x.b+'/api/ping', {method:'POST', mode:'cors', cache:'no-store', headers:{'Content-Type':'application/json'}, body:'{}', signal:ctrl?ctrl.signal:undefined})
+      .then(function(r){ if(!r || !r.ok) throw new Error('http'); return r.json(); })
+      .then(function(j){ if(!j || j.ok!==true) throw new Error('body'); clearTimeout(timer); results[i]={ok:true, ms:Math.round(performance.now()-t0)}; })
+      ['catch'](function(){ clearTimeout(timer); results[i]={ok:false, ms:Math.round(performance.now()-t0)}; })
+      .then(function(){
+        done++;
+        if(done<2) return;
+        var html='';
+        for(var j=0;j<results.length;j++){
+          var r=results[j];
+          html+='<div>'+(r&&r.ok?'✓':'✗')+' مسیر '+targets[j].n+': '+(r&&r.ok?('پاسخ در ~'+toFa(r.ms)+' میلی‌ثانیه'):('بی‌پاسخ (بیش از ۷ ثانیه)'))+'</div>';
+        }
+        var anyOk=results.some(function(r){return r&&r.ok;});
+        html+='<div style="color:var(--dim);margin-top:4px">'+(anyOk
+          ?'اتصال به سرور برقرار است؛ یعنی مشکل از دسترسی نیست. اگر همگام‌سازی باز خطا داد، «آخرین خطای همگام‌سازی» همین صفحه علت دقیق را می‌گوید.'
+          :'هیچ‌کدام از دو مسیر پاسخ نداد — اینترنت دستگاه را چک کنید و دوباره تست بزنید.')+'</div>';
+        box.innerHTML=html;
+      });
+  });
+}
+function pushFailed(kind, status){
   PENDING_OUTBOX=true;
   armOutboxRetry();
   SYNC_FAIL_STREAK++;
+  recordLastSyncErr(kind, status);
   try{ console.warn('[v2.11.7] sync push failed:', kind, '| streak:', SYNC_FAIL_STREAK); }catch(e0){}
   try{
     if(document.hidden) return; /* اپ در پس‌زمینه است — هیچ چیپی مزاحم کاربر نمی‌شود */
   }catch(e1){}
   if(SYNC_FAIL_STREAK>=4){
     try{ clearTimeout(SYNC_ERR_HIDE_TIMER); }catch(e2){}
-    syncChip('err','⚠ چند تلاش پشت‌سرهم ناموفق بود — داده‌ها روی دستگاه محفوظ‌اند و خودکار دوباره تلاش می‌کنیم؛ لمس: تلاش همین حالا');
+    syncChip('err','⚠ چند تلاش پشت‌سرهم ناموفق بود ('+syncErrShort(kind,status)+') — داده‌ها روی دستگاه محفوظ‌اند و خودکار دوباره تلاش می‌کنیم؛ لمس: تلاش همین حالا');
   }else if(SYNC_FAIL_STREAK>=2){
     syncChip('warn','همگام‌سازی به‌خاطر کندی شبکه موقتاً عقب افتاد — خودکار دوباره تلاش می‌کنیم');
     try{ clearTimeout(SYNC_ERR_HIDE_TIMER); }catch(e3){}
@@ -2850,6 +2972,10 @@ function openProfileModal(){
       +'<p class="sub">نسخه: <b class="version-highlight">'+toFa(APP_VERSION)+'</b></p>'
       /* [v2.11.9] مسیر فعال API — برای دیدنِ اثر فیلاور خودکار (apiFailoverPreferFallback بالاتر تعریف شده) */
       +'<p class="sub">مسیر اتصال به سرور: <b>'+(apiFailoverPreferFallback()?'پشتیبان (خودکار)':'اصلی')+'</b></p>'
+      /* [v2.11.15] علت دقیق آخرین شکست + حجم داده + تست اتصال دو مسیر */
+      +lastSyncErrLine()
+      +stateKbLine()
+      +'<div class="modal-actions"><button class="btn ghost" onclick="testConnection()">تست اتصال سرور (هر دو مسیر)</button><div id="connTestResult" style="margin-top:8px;font-size:13px;line-height:1.9"></div></div>'
     +'<p class="sub">آخرین همگام‌سازی موفق با سرور: <b>'+lastSyncText()+'</b>'+(STATE.cars&&STATE.cars.length?' — '+toFa(STATE.cars.length)+' ماشین روی همین دستگاه':'')+'</p>'
       +'<div class="modal-actions"><button class="btn primary" id="syncBtn" onclick="manualSync()">همگام‌سازی الان</button></div>'
       +'<div class="section-title" style="margin:16px 4px 8px">نوتیفیکیشن پس‌زمینه</div>'
@@ -4331,6 +4457,7 @@ enforceAccountBinding();
 renderApp();
 renderTaskbar();
 checkAndNotify();
+apiPreflight();
 initCloudSync();
 try{
   var loginErr=sessionStorage.getItem('carlog:loginError');
@@ -4349,13 +4476,13 @@ checkBroadcast();
 setInterval(checkAndNotify, 30*60*1000);
 setInterval(checkForUpdate, 10*60*1000);
 document.addEventListener('visibilitychange', function(){
-  if(!document.hidden){ checkAndNotify(); checkForUpdate(); reconcileSync(); } /* [v2.11.5] برگشت به اپ = فرصت همگام‌سازی */
+  if(!document.hidden){ checkAndNotify(); apiPreflight(); checkForUpdate(); reconcileSync(); } /* [v2.11.5] برگشت به اپ = فرصت همگام‌سازی */
   else { flushSyncOnHide(); }
 });
 if(typeof window!=='undefined' && window.addEventListener){
   window.addEventListener('pagehide', flushSyncOnHide);
   /* [v2.11.5] برگشت اینترنت = اولین فرصت واقعی برای همگام‌سازیِ معوق (چیپ خطا را هم پاک می‌کند اگر موفق شود) */
-  window.addEventListener('online', function(){ try{ LAST_RECONCILE=0; }catch(e){} reconcileSync(); });
+  window.addEventListener('online', function(){ try{ LAST_RECONCILE=0; }catch(e){} try{ apiPreflight(); }catch(eP){} reconcileSync(); });
 }
 /* [v2.11.5] ضرب‌آهنگ پشتیبان: هر ۵ دقیقه یک هماهنگ‌سازی پس‌زمینه‌ای (کول‌داون داخلی جلوی اسپم را می‌گیرد) */
 setInterval(function(){ try{ reconcileSync(); }catch(e){} }, 5*60*1000);
