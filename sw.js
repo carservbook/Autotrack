@@ -112,8 +112,8 @@
    - خروج امن + سپر تعویض حساب (پچ L-02 — در index.html)
    - تعارض همگام‌سازی + «آخرین همگام‌سازی موفق» (S-03/S-04 — در index.html)
    ============================================================ */
-var CACHE_NAME = 'car-service-cache-gh11';
-var STATIC_ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './Vazirmatn-var.woff2'];
+var CACHE_NAME = 'car-service-cache-gh12';
+var STATIC_ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './Vazirmatn-var.woff2', './icon-180.png', './icon-192-maskable.png', './icon-512-maskable.png'];
 var RETRY_TIMEOUT_MS = 8000;
 var NAV_TIMEOUT_MS = 2500;
 
@@ -200,10 +200,7 @@ self.addEventListener('activate', function(event){
         return Promise.all(STATIC_ASSETS.map(function(u){
           return newCache.match(u).then(function(hit){
             if(hit) return undefined;
-            for(var i=0;i<oldKeys.length;i++){
-              /* کپی از اولین کش قدیمی که دارد — ترتیب keys از جدید به قدیم تضمینی نیست ولی
-                 محتوای همهٔ کش‌های قدیمی معتبرند (هر کدام مربوط به یک نسخهٔ شِل) */
-            }
+            /* [v2.11.20] حلقهٔ مردهٔ باقی‌ماندهٔ v2.11.17 حذف شد */
             return Promise.all(oldKeys.map(function(k){
               return caches.open(k).then(function(oc){ return oc.match(u); });
             })).then(function(hits){

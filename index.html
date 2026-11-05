@@ -872,7 +872,7 @@ body{
     location.replace('/share.html?s='+m8[1]);
   }
 })();
-var APP_VERSION='2.11.19';
+var APP_VERSION='2.11.20';
 /* [v2.11.9] FIX N-02 «اپ باز نمی‌شود» سمت کلاینت در sw.js انجام شده (ناوبری cache-first +
    نجات شِل از مسیر پشتیبان). اینجا فقط: خط «مسیر اتصال» در پروفایل تا وضعیت فیلاور قابل دیدن باشد. */
 /* [v2.6.9] پشتیبانی: ایمیل رسمی تماس — در منو/پروفایل/مودال ورود/درباره و مودال اختلال گوگل استفاده می‌شود */
@@ -2528,7 +2528,10 @@ function scheduleCloudSync(){
    ۱) فشرده‌سازی gzip سمت کلاینت (CompressionStream) — حجمِ روی سیم چند برابر کم می‌شود
    ۲) تقسیم به بخش‌های ~۱۸۰KB — هر بخش درخواستی کوچک و مستقلاً قابل تلاش مجدد است
    ۳) دروازهٔ نسخهٔ ورکر: تا ورکر 2.11.14 تأیید نشده، همان مسیر قدیمی (سازگار کامل) */
-var PUSH_CHUNK_DEFAULT=12*1024, PUSH_CHUNK_MIN=3*1024, PUSH_CHUNK_MAX=16*1024;
+var PUSH_CHUNK_DEFAULT=12*1024, PUSH_CHUNK_MIN=4*1024, PUSH_CHUNK_MAX=16*1024;
+/* [v2.11.20] سقف بخش‌ها: در کوچک‌سازی، اندازهٔ تکه هرگز زیر gz/PUSH_MAX_PARTS نمی‌رود تا
+   تعداد بخش‌ها همیشه داخل سقفِ پذیرفتهٔ ورکر بماند (سرویس زنده تا n=256 تأیید شد) */
+var PUSH_MAX_PARTS=240;
 /* [v2.11.19] روی بعضی شبکه‌های ایران آپلودِ بزرگ‌تر از ~۲۰-۲۵KB با RST قطع می‌شود (اندازه‌گیری واقعی):
    تکه‌ها کوچک شروع می‌شوند، در شکست نصف می‌شوند و اندازهٔ موفق برای دفعهٔ بعد یادآوری می‌شود */
 function getChunkSize(){
@@ -2537,6 +2540,31 @@ function getChunkSize(){
   return PUSH_CHUNK_DEFAULT;
 }
 function saveChunkSize(v){ try{ localStorage.setItem('carlog:chunkSize', String(v)); }catch(e){} }
+/* [v2.11.20] تناوب مسیر در ارسال بخش‌ها — چرا: مرورگر برای هر اورجین معمولاً از یک اتصال HTTP/2
+   مشترک استفاده می‌کند و روی بعضی شبکه‌های ایران آپلودِ تجمعیِ یک اتصال (حتی با تکه‌های کوچک)
+   بعد از ~۲۰-۳۰KB با RST قطع می‌شود (اندازه‌گیری واقعی: ۲۰KB پاس، ۳۰KB قطع). بخش‌های زوج/فرد
+   روی دو اورجینِ «یک ورکر» می‌روند → بودجهٔ آپلود بین دو اتصال/مسیر تقسیم می‌شود و اگر یک مسیر
+   وسط کار افتاد، مسیر دیگر ادامه می‌دهد (همان ورکر، همان D1، همان داده). */
+function apiVerAliveBases(){
+  var c=apiVerCacheRead(), out=[];
+  [API_BASE, API_FALLBACK_BASE].forEach(function(b){
+    var e=c[b];
+    if(e && e.v && (Date.now()-(e.at||0))<600000) out.push(b);
+  });
+  return out;
+}
+function partBase(idx, attempt){
+  var alive=apiVerAliveBases();
+  if(alive.length>=2) return alive[(idx+attempt)%2];
+  if(alive.length===1) return alive[0];
+  return pushOkBase()===API_FALLBACK_BASE?API_FALLBACK_BASE:API_BASE;
+}
+function rotatableErr(m){
+  return m==='TIMEOUT' || m.indexOf('HTTP_')!==0 || m==='HTTP_404' || /^HTTP_5\d\d$/.test(m);
+}
+function setLastPartInfo(i, n, sz, via, kind){
+  try{ sessionStorage.setItem('carlog:lastPartInfo', JSON.stringify({i:i, n:n, sz:sz, via:via, kind:kind, t:Date.now()})); }catch(e){}
+}
 function cmpVer(a,b){
   try{
     var pa=String(a).split('.'), pb=String(b).split('.');
@@ -2584,14 +2612,19 @@ function doPushSend(pushBody){
     }
     var cs=getChunkSize();
     function isHttpErr(err){ return !!(err && err.message && String(err.message).indexOf('HTTP_')===0); }
+    /* [v2.11.20] خطاهای قطعی سرور — چرخش مسیر و کوچک‌سازی بی‌فایده است */
+    function fatalHttp(err){ var m=err&&err.message?String(err.message):''; return m==='HTTP_400'||m==='HTTP_401'||m==='HTTP_413'; }
     function chunkedWithBackoff(sz){
+      var szFloor=Math.ceil(gz.length/PUSH_MAX_PARTS);
+      function shrink(s){ return Math.max(PUSH_CHUNK_MIN, szFloor, Math.floor(s/2)); }
       return doPushChunked(gz, pushBody, sz).then(function(res){
         if(res && res.ok) saveChunkSize(sz);
         return res;
       })['catch'](function(err){
-        /* خطای سرور (HTTP_xxx) = تلاش دوباره بی‌فایده؛ قطع/تایم‌اوت = تکه‌های کوچک‌تر */
-        if(isHttpErr(err) || sz<=PUSH_CHUNK_MIN) throw err;
-        return chunkedWithBackoff(Math.max(PUSH_CHUNK_MIN, Math.floor(sz/2)));
+        if(fatalHttp(err)) throw err;
+        var ns=shrink(sz);
+        if(ns>=sz) throw err; /* دیگر کوچک‌تر نمی‌شود — تکرار بی‌نتیجه ممنوع */
+        return chunkedWithBackoff(ns);
       });
     }
     var p=(gz.length<=cs)
@@ -2607,33 +2640,52 @@ function doPushSend(pushBody){
 function doPushChunked(gz, pushBody, size){
   size=size||PUSH_CHUNK_DEFAULT;
   var n=Math.ceil(gz.length/size);
+  if(n>PUSH_MAX_PARTS){ n=PUSH_MAX_PARTS; size=Math.ceil(gz.length/n); } /* [v2.11.20] */
   var uid=''; try{ uid=(crypto && crypto.randomUUID)?crypto.randomUUID().replace(/-/g,''):String(Date.now())+Math.random().toString(16).slice(2,10); }catch(e0){ uid=String(Date.now()); }
   var cars=(pushBody.data && pushBody.data.cars)?pushBody.data.cars.length:0;
-  var i=0;
-  function next(){
-    if(i>=n){
-      return apiFetch('/api/data-chunk-final', {method:'POST', timeoutMs:30000, preferBase:pushOkBase(),
-        body: JSON.stringify({uid:uid, n:n, cars:cars, size:gz.length, confirmWipe:!!pushBody.confirmWipe})});
-    }
-    var idx=i; i++;
+  var confirmWipe=!!pushBody.confirmWipe;
+  function baseOpt(via){ return via===API_FALLBACK_BASE?'fallback':'primary'; }
+  function sendChunk(idx, attempt){
     var part=gz.subarray(idx*size, Math.min(gz.length, (idx+1)*size));
+    var vb=partBase(idx, attempt);
     try{ syncChip('busy', 'ارسال بخش '+toFa(idx+1)+' از '+toFa(n)+'…'); }catch(eChip){}
-    function sendPart(attempt){
-      return apiFetch('/api/data-chunk?uid='+uid+'&i='+idx+'&n='+n, {method:'POST', timeoutMs:30000, preferBase:pushOkBase(), raw:true, body:part})
-        .then(function(res){
-          if(!res.ok){ var e=new Error('HTTP_'+res.status); throw e; }
-          return next();
-        })
-        ['catch'](function(err){
-          /* [v2.11.17] تایم‌اوت/قطعیِ یک بخش = دوباره همان بخش (تا ۳ تلاش)؛ خطای سرور = شکست کل پوش */
-          var m=(err&&err.message)?String(err.message):'';
-          if(attempt<2 && m.indexOf('HTTP_')!==0) return sendPart(attempt+1);
-          throw err;
-        });
-    }
-    return sendPart(0);
+    return apiFetch('/api/data-chunk?uid='+uid+'&i='+idx+'&n='+n, {method:'POST', timeoutMs:30000, preferBase:baseOpt(vb), raw:true, body:part})
+      .then(function(res){
+        if(!res.ok){ setLastPartInfo(idx+1, n, part.length, vb, 'HTTP_'+res.status); var e=new Error('HTTP_'+res.status); throw e; }
+        setLastPartInfo(0,0,0,'','');
+        return true;
+      })
+      ['catch'](function(err){
+        /* [v2.11.20] تایم‌اوت/قطع/404/5xx = تلاش دوبارهٔ «همان بخش» با مسیرِ دیگر؛
+           400/401/413 قطعی است و بی‌فایده دوباره می‌شود */
+        var m=(err&&err.message)?String(err.message):'';
+        if(attempt<2 && rotatableErr(m)){ setLastPartInfo(idx+1, n, part.length, vb, m==='TIMEOUT'?'timeout':'network'); return sendChunk(idx, attempt+1); }
+        setLastPartInfo(idx+1, n, part.length, vb, m==='TIMEOUT'?'timeout':(m.indexOf('HTTP_')===0?'http':'network'));
+        throw err;
+      });
   }
-  return next();
+  function runAll(){
+    var idx=0;
+    function step(){
+      if(idx>=n) return true;
+      var cur=idx; idx++;
+      return sendChunk(cur, 0).then(step);
+    }
+    return step();
+  }
+  function finalOnce(round){
+    return apiFetch('/api/data-chunk-final', {method:'POST', timeoutMs:30000, preferBase:baseOpt(partBase(n,0)),
+      body: JSON.stringify({uid:uid, n:n, cars:cars, size:gz.length, confirmWipe:confirmWipe})})
+      .then(function(res){
+        if(res.status===409 && res.data && res.data.needConfirm) return res;
+        /* [v2.11.20] بخش ناقص (have<need) → همهٔ بخش‌ها با همان uid دوباره (upsert بی‌خطر) و final دوم */
+        if(res.status===409 && res.data && typeof res.data.need==='number' && typeof res.data.have==='number' && res.data.have<res.data.need && round<1){
+          return runAll().then(function(){ return finalOnce(round+1); });
+        }
+        return res;
+      });
+  }
+  return runAll().then(function(){ return finalOnce(0); });
 }
 /* ================= پایان موتور پوش مقاوم ================= */
 
@@ -2716,7 +2768,7 @@ function flushSyncOnHide(){
   try{
     var payload=JSON.stringify({token:getAuthToken(), data: STATE});
     var blob=new Blob([payload], {type:'application/json'});
-    navigator.sendBeacon('/api/data-beacon', blob);
+    navigator.sendBeacon(API_BASE+'/api/data-beacon', blob); /* [v2.11.20] URL مطلق — روی شِل گیتهاب مسیر نسبی به خود گیتهاب می‌رفت (404) */
   }catch(e){}
 }
 
@@ -2754,6 +2806,13 @@ function recordLastSyncErr(kind, status){
 }
 function clearLastSyncErr(){ try{ localStorage.removeItem(LAST_SYNC_ERR_KEY); }catch(e){} }
 function syncErrShort(kind, status){
+  /* [v2.11.20] اگر خطا در میانهٔ ارسال بخش‌ها رخ داده، شمارهٔ بخش/حجم/مسیر هم دیده می‌شود */
+  if(kind==='timeout'||kind==='network'){
+    var lp=null; try{ lp=JSON.parse(sessionStorage.getItem('carlog:lastPartInfo')||'null'); }catch(e0){}
+    if(lp && lp.n && lp.i && (Date.now()-(lp.t||0))<120000){
+      return (kind==='timeout'?'تایم‌اوت':'قطع')+' در بخش '+toFa(lp.i)+' از '+toFa(lp.n)+' ('+toFa(Math.max(1,Math.round(lp.sz/1024)))+'KB، '+((lp.via===API_FALLBACK_BASE)?'مسیر پشتیبان':'مسیر اصلی')+')';
+    }
+  }
   if(kind==='timeout') return 'تایم‌اوت شبکه';
   if(kind==='network') return 'قطع اتصال';
   if(kind==='auth') return 'نشست منقضی';
@@ -3351,8 +3410,9 @@ function manualSync(){
     }
     if(!cloudHasCars && localHasCars){
       /* [S-07] سرور خالی است → بازیابی سرور از دستگاه (جهت امن: پر روی خالی) */
-      /* [v2.11.16] همان پنجرهٔ ۶۰ثانیه‌ای پوش */
-        apiFetch('/api/data', {method:'POST', body: JSON.stringify({data: STATE}), timeoutMs:60000, preferBase:pushOkBase()}).then(function(res2){
+      /* [v2.11.20] بازیابیِ سرور از دستگاه با همان موتور مقاوم (gzip+بخش‌بندی) —
+         یک POST خامِ مگابایتی روی این شبکه‌ها با RST قطع می‌شود */
+        doPushSend({data: STATE}).then(function(res2){
         if(res2.ok){ pushOkRecord(res2.via); setAccountStamp(getAuthEmail()); setLastSyncAt(); toast('همگام‌سازی شد ✓'); resetBtn(true); }
         else { toast('همگام‌سازی ناموفق بود'); resetBtn(false); }
       }).catch(function(){ toast('اتصال برقرار نشد'); resetBtn(false); });
