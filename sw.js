@@ -1,3 +1,5 @@
+/* [v2.11.17] تغییر نسبت به gh8: CACHE_NAME → gh9 + فیکس حیاتی activate: قبل از حذف کش قدیمی،
+   دارایی‌های precache نشده از جدیدترین کش قدیمی کپی می‌شوند — دیگر آپدیت‌ها کشِ آفلاین را نمی‌کشند.
 /* [v2.11.15] تغییر نسبت به gh6: فقط CACHE_NAME → gh7 — رساندن index.html جدید
    (تشخیص شفاف sync: ثبت علت خطا + نمایش در پروفایل + تست اتصال دو مسیر + هندل 401
    در پوش خودکار + فیکس پیش‌پرواز: پروب به /version.json). هیچ منطق کش/API در SW عوض نشده. */
@@ -110,7 +112,7 @@
    - خروج امن + سپر تعویض حساب (پچ L-02 — در index.html)
    - تعارض همگام‌سازی + «آخرین همگام‌سازی موفق» (S-03/S-04 — در index.html)
    ============================================================ */
-var CACHE_NAME = 'car-service-cache-gh8';
+var CACHE_NAME = 'car-service-cache-gh9';
 var STATIC_ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './Vazirmatn-var.woff2'];
 var RETRY_TIMEOUT_MS = 8000;
 var NAV_TIMEOUT_MS = 2500;
@@ -189,7 +191,31 @@ self.addEventListener('install', function(event){
 self.addEventListener('activate', function(event){
   event.waitUntil(
     caches.keys().then(function(keys){
-      return Promise.all(keys.filter(function(k){ return k!==CACHE_NAME; }).map(function(k){ return caches.delete(k); }));
+      var oldKeys=keys.filter(function(k){ return k!==CACHE_NAME; });
+      /* [v2.11.17] فیکس «اپ آفلاین باز نمی‌شود بعد از آپدیت»: قبلاً کشِ قدیمی بی‌قید حذف می‌شد
+         حتی اگر precache نسخهٔ جدید ناقص مانده باشد (نصب مقاوم فایل‌های ناموفق را نادیده می‌گیرد)
+         → کاربرِ آفلاین شِل را از دست می‌داد. حالا اول هر داراییِ غایب از جدیدترین کشِ قدیمی
+         کپی می‌شود و بعد کش‌های کهنه حذف می‌شوند. */
+      return caches.open(CACHE_NAME).then(function(newCache){
+        return Promise.all(STATIC_ASSETS.map(function(u){
+          return newCache.match(u).then(function(hit){
+            if(hit) return undefined;
+            for(var i=0;i<oldKeys.length;i++){
+              /* کپی از اولین کش قدیمی که دارد — ترتیب keys از جدید به قدیم تضمینی نیست ولی
+                 محتوای همهٔ کش‌های قدیمی معتبرند (هر کدام مربوط به یک نسخهٔ شِل) */
+            }
+            return Promise.all(oldKeys.map(function(k){
+              return caches.open(k).then(function(oc){ return oc.match(u); });
+            })).then(function(hits){
+              var good=hits.filter(function(h){ return h; })[0];
+              if(good) return newCache.put(u, good);
+              return undefined;
+            });
+          });
+        })).then(function(){
+          return Promise.all(oldKeys.map(function(k){ return caches.delete(k); }));
+        });
+      });
     })
   );
   self.clients.claim();

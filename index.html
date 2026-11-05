@@ -872,7 +872,7 @@ body{
     location.replace('/share.html?s='+m8[1]);
   }
 })();
-var APP_VERSION='2.11.16';
+var APP_VERSION='2.11.17';
 /* [v2.11.9] FIX N-02 «اپ باز نمی‌شود» سمت کلاینت در sw.js انجام شده (ناوبری cache-first +
    نجات شِل از مسیر پشتیبان). اینجا فقط: خط «مسیر اتصال» در پروفایل تا وضعیت فیلاور قابل دیدن باشد. */
 /* [v2.6.9] پشتیبانی: ایمیل رسمی تماس — در منو/پروفایل/مودال ورود/درباره و مودال اختلال گوگل استفاده می‌شود */
@@ -2439,7 +2439,9 @@ function apiFetchVia(base, path, opts){
 function apiFetch(path, opts){
   opts=opts||{};
   opts.headers=opts.headers||{};
-  opts.headers['Content-Type']='application/json';
+  /* [v2.11.17] بدنهٔ خام (بایت‌های gzip) برای مسیر پوش مقاوم */
+  if(opts.raw){ opts.headers['Content-Type']='application/octet-stream'; opts.headers['X-Payload-Encoding']='gzip'; }
+  else{ opts.headers['Content-Type']='application/json'; }
   var token=getAuthToken();
   if(token) opts.headers['Authorization']='Bearer '+token;
   /* [v2.11.8] انتخاب مسیر اول/دوم + فیلاور فقط روی خطای شبکه (TIMEOUT/TypeError) */
@@ -2452,13 +2454,13 @@ function apiFetch(path, opts){
      ناسازگار، معطلِ مسیر مرده نمانیم؛ تلاش دوم ۱۵ثانیه. POSTها (نوشتن) مثل قبل ۲۰ثانیه. */
   var isGet=(!opts.method || opts.method==='GET');
   var firstOpts=opts;
-  if(isGet){ firstOpts={}; for(var fk in opts){ firstOpts[fk]=opts[fk]; } firstOpts.timeoutMs=8000; }
+  if(isGet){ firstOpts={}; for(var fk in opts){ firstOpts[fk]=opts[fk]; } /* [v2.11.17] پولِ /api/data می‌تواند مگابایتی باشد — پنجرهٔ بلند */ firstOpts.timeoutMs=(path==='/api/data')?30000:8000; }
   return apiFetchVia(first, path, firstOpts)['catch'](function(err1){
     var netErr=!!(err1 && (err1.message==='TIMEOUT' || err1.name==='TypeError' || err1.name==='AbortError' || err1.name==='TimeoutError'));
     if(!netErr) throw err1;
     try{ console.warn('[v2.11.8] مسیر اصلی API در دسترس نبود؛ تلاش با مسیر پشتیبان:', second); }catch(e0){}
     var secondOpts=opts;
-    if(isGet){ secondOpts={}; for(var sk in opts){ secondOpts[sk]=opts[sk]; } secondOpts.timeoutMs=15000; }
+    if(isGet){ secondOpts={}; for(var sk in opts){ secondOpts[sk]=opts[sk]; } secondOpts.timeoutMs=(path==='/api/data')?45000:15000; }
     return apiFetchVia(second, path, secondOpts);
   }).then(function(res){
     /* [v2.11.8] خودترمیم: هر موفقیت مسیرِ برنده را ثبت/تازه می‌کند؛ موفقیت مسیر اصلی رکورد فیلاور را پاک می‌کند */
@@ -2478,6 +2480,10 @@ function apiFetch(path, opts){
    نشست دیگر معطل تایم‌اوتِ مسیرِ کند نمی‌ماند. کول‌داون ۶۰ثانیه؛ شکست هر دو = بی‌طرف. */
 var API_PREFLIGHT_INFLIGHT=false, API_PREFLIGHT_LAST=0;
 function apiPreflight(){
+  try{
+    /* [v2.11.17] تازه‌کردن نسخهٔ ورکر برای دروازهٔ پوش مقاوم (سبک و با TTL) */
+    apiVerProbe(API_BASE); apiVerProbe(API_FALLBACK_BASE);
+  }catch(eV0){}
   try{
     if(API_PREFLIGHT_INFLIGHT || typeof fetch==='undefined') return;
     var now=Date.now();
@@ -2515,6 +2521,97 @@ function scheduleCloudSync(){
    نسخهٔ قبلی خطاها را با catch(function(){}) قورت می‌داد و کاربر هیچ‌چیز نمی‌دید.
    حالا: نتیجه (true/false) برمی‌گردد + چیپ وضعیت sync به‌روز می‌شود + در صورت خطا
    PENDING_OUTBOX فعال می‌شود (تلاش مجدد خودکار) و دلیل خطا دیده می‌شود. */
+
+/* ================= [v2.11.17] موتور پوش مقاوم — gzip + چندبخشی =================
+   ریشهٔ «اتصال هست ولی همگام‌سازی نمی‌شود»: payload مگابایتی در یک درخواستِ واحد
+   روی مسیر شلوغ تایم‌اوت می‌شود، ولی پینگِ سبک رد می‌شود. راه‌حل ریشه‌ای:
+   ۱) فشرده‌سازی gzip سمت کلاینت (CompressionStream) — حجمِ روی سیم چند برابر کم می‌شود
+   ۲) تقسیم به بخش‌های ~۱۸۰KB — هر بخش درخواستی کوچک و مستقلاً قابل تلاش مجدد است
+   ۳) دروازهٔ نسخهٔ ورکر: تا ورکر 2.11.14 تأیید نشده، همان مسیر قدیمی (سازگار کامل) */
+var PUSH_CHUNK_SIZE=180*1024, PUSH_GZIP_DIRECT_MAX=260*1024;
+function cmpVer(a,b){
+  try{
+    var pa=String(a).split('.'), pb=String(b).split('.');
+    for(var i=0;i<3;i++){ var x=parseInt(pa[i],10)||0, y=parseInt(pb[i],10)||0; if(x!==y) return x<y?-1:1; }
+    return 0;
+  }catch(e){ return -1; }
+}
+function apiVerCacheRead(){ try{ return JSON.parse(localStorage.getItem('carlog:apiVer')||'{}'); }catch(e){ return {}; } }
+function apiVerSupportsBlob(){
+  var c=apiVerCacheRead();
+  var okB=[];
+  [API_BASE, API_FALLBACK_BASE].forEach(function(b){
+    var e=c[b];
+    if(e && e.v && (Date.now()-(e.at||0))<600000 && cmpVer(e.v,'2.11.14')>=0) okB.push(1);
+  });
+  return okB.length===2;
+}
+function apiVerProbe(base){
+  try{
+    var c=apiVerCacheRead(), e=c[base];
+    if(e && e.v && (Date.now()-(e.at||0))<600000) return;
+    if(typeof fetch==='undefined') return;
+    fetch(base+'/version.json?_t='+Date.now(), {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){
+      var m=apiVerCacheRead();
+      m[base]={v:String((v&&v.version)||''), at:Date.now()};
+      try{ localStorage.setItem('carlog:apiVer', JSON.stringify(m)); }catch(e1){}
+    })['catch'](function(){});
+  }catch(e0){}
+}
+function gzipStr(str){
+  if(typeof CompressionStream==='undefined') return Promise.resolve(null);
+  try{
+    var stream=new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'));
+    return new Response(stream).arrayBuffer().then(function(buf){ return new Uint8Array(buf); })['catch'](function(){ return null; });
+  }catch(e){ return Promise.resolve(null); }
+}
+function doPushSend(pushBody){
+  var jsonStr=JSON.stringify(pushBody);
+  var bothBlobs=apiVerSupportsBlob();
+  return gzipStr(jsonStr).then(function(gz){
+    if(!gz || !bothBlobs){
+      /* مسیر قدیمی — کامل سازگار با ورکرهای قدیمی */
+      return apiFetch('/api/data', {method:'POST', body: jsonStr, timeoutMs:60000, preferBase:pushOkBase()});
+    }
+    if(gz.length<=PUSH_GZIP_DIRECT_MAX){
+      /* یک درخواست فشرده */
+      return apiFetch('/api/data', {method:'POST', body: gz, timeoutMs:60000, preferBase:pushOkBase(), raw:true});
+    }
+    return doPushChunked(gz, pushBody);
+  });
+}
+function doPushChunked(gz, pushBody){
+  var n=Math.ceil(gz.length/PUSH_CHUNK_SIZE);
+  var uid=''; try{ uid=(crypto && crypto.randomUUID)?crypto.randomUUID().replace(/-/g,''):String(Date.now())+Math.random().toString(16).slice(2,10); }catch(e0){ uid=String(Date.now()); }
+  var cars=(pushBody.data && pushBody.data.cars)?pushBody.data.cars.length:0;
+  var i=0;
+  function next(){
+    if(i>=n){
+      return apiFetch('/api/data-chunk-final', {method:'POST', timeoutMs:30000, preferBase:pushOkBase(),
+        body: JSON.stringify({uid:uid, n:n, cars:cars, size:gz.length, confirmWipe:!!pushBody.confirmWipe})});
+    }
+    var idx=i; i++;
+    var part=gz.subarray(idx*PUSH_CHUNK_SIZE, Math.min(gz.length, (idx+1)*PUSH_CHUNK_SIZE));
+    try{ syncChip('busy', 'ارسال بخش '+toFa(idx+1)+' از '+toFa(n)+'…'); }catch(eChip){}
+    function sendPart(attempt){
+      return apiFetch('/api/data-chunk?uid='+uid+'&i='+idx+'&n='+n, {method:'POST', timeoutMs:30000, preferBase:pushOkBase(), raw:true, body:part})
+        .then(function(res){
+          if(!res.ok){ var e=new Error('HTTP_'+res.status); throw e; }
+          return next();
+        })
+        ['catch'](function(err){
+          /* [v2.11.17] تایم‌اوت/قطعیِ یک بخش = دوباره همان بخش (تا ۳ تلاش)؛ خطای سرور = شکست کل پوش */
+          var m=(err&&err.message)?String(err.message):'';
+          if(attempt<2 && m.indexOf('HTTP_')!==0) return sendPart(attempt+1);
+          throw err;
+        });
+    }
+    return sendPart(0);
+  }
+  return next();
+}
+/* ================= پایان موتور پوش مقاوم ================= */
+
 function doCloudPush(allowEmpty, showOk){
   if(typeof fetch==='undefined' || !getAuthToken()) return Promise.resolve(false);
   /* [S-07 fix v2.6.7] هیچ پوشِ خودکاری حالتِ خالی را نمی‌فرستد — پوشِ حالتِ خالی همان پاک‌کردنِ سرور است.
@@ -2530,8 +2627,8 @@ function doCloudPush(allowEmpty, showOk){
      پوش خالی با confirmWipe همراه می‌شود تا گارد سرور (empty-wipe-guard) ردش نکند */
   var pushBody={data: STATE};
   try{ if(WIPE_CONFIRM_AT && (Date.now()-WIPE_CONFIRM_AT)<900000){ pushBody.confirmWipe=true; } }catch(e0){}
-  /* [v2.11.16] پنجرهٔ پوش ۶۰ثانیه (به‌جای ۲۰) + شروع از پایهٔ پوش-اثبات‌شده — پینگِ سبک رد می‌شود ولی پوشِ سنگین روی مسیرِ شلوغ به ۲۰ثانیه نمی‌رسد */
-  return apiFetch('/api/data', {method:'POST', body: JSON.stringify(pushBody), timeoutMs:60000, preferBase:pushOkBase()}).then(function(res){
+  /* [v2.11.17] ارسال مقاوم: gzip + در صورت لزوم چندبخشی — خروجی همان شکل apiFetch است */
+  return doPushSend(pushBody).then(function(res){
     /* [v2.11.13] گارد سرور: پوش خالیِ بدون حذفِ آگاهانه رد شده (409 needConfirm) —
        این یعنی حالت خالی محلی عمدی نیست؛ خودترمیمی: بکش از سرور، بدون چیپ قرمز و outbox */
     if(res.status===409 && res.data && res.data.needConfirm){
@@ -2580,7 +2677,10 @@ function doCloudPush(allowEmpty, showOk){
     return false;
   })['catch'](function(err){
     clearBusyChip();
-    pushFailed((err && err.message==='TIMEOUT') ? 'timeout' : 'network', 0);
+    var _m=err&&err.message?String(err.message):'';
+    if(_m==='TIMEOUT') pushFailed('timeout',0);
+    else if(_m.indexOf('HTTP_')===0) pushFailed('bad-response', parseInt(_m.slice(5),10)||0);
+    else pushFailed('network', 0);
     return false;
   });
 }
@@ -2815,6 +2915,8 @@ function initCloudSync(){
   apiFetch('/api/data', {method:'GET'}).then(function(res){
     if(!res.ok){
       if(res.status===401) clearAuth();
+      /* [v2.11.17] خطای پول دیگر بی‌صدا نیست — پروفایل همیشه علتِ تازه نشان می‌دهد */
+      else if(res.status>=500 && navigator.onLine!==false){ try{ recordLastSyncErr('bad-response', res.status); }catch(eR1){} }
       return;
     }
     var localModified=0;
@@ -2875,6 +2977,8 @@ function initCloudSync(){
   }).catch(function(err){
     /* [S-07 fix v2.6.7] خطاها دیگر بی‌صدا قورت داده نمی‌شوند — آفلاین عادی است، باگ نه */
     try{ console.warn('[S-07] initCloudSync failed (offline or bug):', err && err.message); }catch(e){}
+    /* [v2.11.17] ثبت علت برای پروفایل (فقط وقتی آنلاینیم — آفلاین عادی است نه خطا) */
+    try{ if(navigator.onLine!==false) recordLastSyncErr((err && err.message==='TIMEOUT')?'timeout':'network', 0); }catch(eR2){}
   });
 }
 /* ---------- [v2.11.13] راهنمای «حساب خالی» — ریشهٔ ماجرای نصب مجدد TWA ----------
@@ -3251,6 +3355,7 @@ function manualSync(){
     resetBtn(true);
   }).catch(function(err){
     /* [v2.11.5] دلیل واقعی دیده می‌شود — timeout جدا از قطعیِ کامل */
+    try{ if(navigator.onLine!==false) recordLastSyncErr((err && err.message==='TIMEOUT')?'timeout':'network', 0); }catch(eR3){}
     toast((err && err.message==='TIMEOUT') ? 'اتصال خیلی کند بود — دوباره امتحان کن' : 'اتصال برقرار نشد');
     resetBtn(false);
   });
@@ -4495,6 +4600,21 @@ if(!hasTourBeenSeen()){
 } else {
   setTimeout(showDataSafetyWarning, 400);
 }
+/* [v2.11.17] بنر آرام آفلاین — نصب/باز شدن بدون اینترنت کاملاً عادی است:
+   همه‌چیز روی دستگاه ذخیره می‌شود و با اولین اتصال خودکار همگام می‌شود */
+function offlineBanner(){
+  try{
+    if(!('onLine' in navigator) || typeof syncChip!=='function') return;
+    var f=function(){
+      try{ syncChip(navigator.onLine?null:'warn', 'آفلاین — تغییرات روی دستگاه ذخیره می‌شود؛ با وصل‌شدن اینترنت خودکار همگام می‌شود'); }catch(e1){}
+    };
+    if(window.__obF){ try{ window.removeEventListener('online',window.__obF); window.removeEventListener('offline',window.__obF); }catch(e2){} }
+    window.__obF=f;
+    window.addEventListener('online',f); window.addEventListener('offline',f);
+    f();
+  }catch(e0){}
+}
+try{ offlineBanner(); }catch(eOB){}
 checkForUpdate();
 v27DailyPing('open');
 setTimeout(uploadReminderDigest, 6000);
