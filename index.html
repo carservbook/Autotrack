@@ -872,7 +872,7 @@ body{
     location.replace('/share.html?s='+m8[1]);
   }
 })();
-var APP_VERSION='2.11.17';
+var APP_VERSION='2.11.18';
 /* [v2.11.9] FIX N-02 «اپ باز نمی‌شود» سمت کلاینت در sw.js انجام شده (ناوبری cache-first +
    نجات شِل از مسیر پشتیبان). اینجا فقط: خط «مسیر اتصال» در پروفایل تا وضعیت فیلاور قابل دیدن باشد. */
 /* [v2.6.9] پشتیبانی: ایمیل رسمی تماس — در منو/پروفایل/مودال ورود/درباره و مودال اختلال گوگل استفاده می‌شود */
@@ -2528,7 +2528,7 @@ function scheduleCloudSync(){
    ۱) فشرده‌سازی gzip سمت کلاینت (CompressionStream) — حجمِ روی سیم چند برابر کم می‌شود
    ۲) تقسیم به بخش‌های ~۱۸۰KB — هر بخش درخواستی کوچک و مستقلاً قابل تلاش مجدد است
    ۳) دروازهٔ نسخهٔ ورکر: تا ورکر 2.11.14 تأیید نشده، همان مسیر قدیمی (سازگار کامل) */
-var PUSH_CHUNK_SIZE=180*1024, PUSH_GZIP_DIRECT_MAX=260*1024;
+var PUSH_CHUNK_SIZE=32*1024, PUSH_GZIP_DIRECT_MAX=40*1024; /* [v2.11.18] تکه‌های کوچک: درخواست بزرگ روی مسیر ناپایدار گیر می‌کرد */
 function cmpVer(a,b){
   try{
     var pa=String(a).split('.'), pb=String(b).split('.');
@@ -2544,7 +2544,7 @@ function apiVerSupportsBlob(){
     var e=c[b];
     if(e && e.v && (Date.now()-(e.at||0))<600000 && cmpVer(e.v,'2.11.14')>=0) okB.push(1);
   });
-  return okB.length===2;
+  return okB.length>=1; /* [v2.11.18] هر دو مسیر یک ورکرند؛ افتادن یک مسیر نباید مسیر قدیمی/سنگین را فعال کند */
 }
 function apiVerProbe(base){
   try{
@@ -2568,16 +2568,21 @@ function gzipStr(str){
 function doPushSend(pushBody){
   var jsonStr=JSON.stringify(pushBody);
   var bothBlobs=apiVerSupportsBlob();
+  function legacy(){ return apiFetch('/api/data', {method:'POST', body: jsonStr, timeoutMs:60000, preferBase:pushOkBase()}); }
   return gzipStr(jsonStr).then(function(gz){
     if(!gz || !bothBlobs){
       /* مسیر قدیمی — کامل سازگار با ورکرهای قدیمی */
-      return apiFetch('/api/data', {method:'POST', body: jsonStr, timeoutMs:60000, preferBase:pushOkBase()});
+      return legacy();
     }
-    if(gz.length<=PUSH_GZIP_DIRECT_MAX){
-      /* یک درخواست فشرده */
-      return apiFetch('/api/data', {method:'POST', body: gz, timeoutMs:60000, preferBase:pushOkBase(), raw:true});
-    }
-    return doPushChunked(gz, pushBody);
+    var p=(gz.length<=PUSH_GZIP_DIRECT_MAX)
+      ? apiFetch('/api/data', {method:'POST', body: gz, timeoutMs:60000, preferBase:pushOkBase(), raw:true})
+      : doPushChunked(gz, pushBody);
+    /* [v2.11.18] اگر مسیر فشرده/تکه‌ای به‌خاطر خطای غیرتایم‌اوت شکست خورد (مثلاً CORS/ورکر قدیمی)،
+       یک‌بار با مسیر قدیمی امتحان می‌شود تا همگام‌سازی کاملاً از کار نیفتد */
+    return p['catch'](function(err){
+      if(err && err.message==='TIMEOUT') throw err;
+      return legacy();
+    });
   });
 }
 function doPushChunked(gz, pushBody){
