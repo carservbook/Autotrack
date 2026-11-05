@@ -1,0 +1,26 @@
+# ============================================================
+# هدرهای امنیتی — v2.11.8 (S-01 + P-01 + مجوز connect-src دامنهٔ API: api.carservbook.ir + مسیر پشتیبان فیلاور: autotrack.carservbook.ir)
+# این فایل را در ریشه پوشه public/ قرار دهید (کنار index.html و کنار پوشه fonts/).
+# پشتیبانی: Cloudflare Workers Assets (wrangler 2025 به بعد) و Cloudflare Pages.
+# بعد از دیپلوی تست کنید:
+#   curl -sI https://carservbook.ir/ | grep -i content-security
+# در CSP دیگر خبری از fonts.googleapis.com و fonts.gstatic.com نیست
+# (فونت self-host شده) — این سخت‌گیری جدید عمدی است.
+# اگر هدرها در پاسخ نبودند (ورژن قدیمی wrangler)، از روش الحاق کد
+# (security-headers-worker.js به‌روزشده در همین بسته) استفاده کنید.
+# ============================================================
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' https://accounts.google.com https://api.carservbook.ir https://autotrack.carservbook.ir; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=()
+  Cross-Origin-Opener-Policy: same-origin
+
+/sw.js
+  Cache-Control: no-cache
+
+/version.json
+  Cache-Control: no-cache

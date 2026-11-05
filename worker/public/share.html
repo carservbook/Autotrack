@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>تاریخچهٔ سرویس خودرو — دفترچه سرویس خودرو</title>
+<!-- [v2.9.0] صفحهٔ عمومی «لینک مکانیک» — بدون لاگین، فقط-خواندنی.
+     داده از GET /api/share/<کلید> می‌آید؛ کلید ۳۲ کاراکتر هگز (۱۲۸ بیت آنتروپی).
+     این صفحه به عمد Service Worker ثبت نمی‌کند و هیچ کوکی/حافظه‌ای نمی‌نویسد. -->
+<style>
+@font-face{
+  font-family:'Vazirmatn';
+  src:url('/fonts/Vazirmatn-var.woff2') format('woff2-variations');
+  font-weight:100 900; font-style:normal; font-display:swap;
+}
+:root{
+  --bg:#f4f5f8; --card:#ffffff; --text:#1c2430; --dim:#69707d;
+  --border:#e6e8ee; --accent:#e8a020; --accent-dark:#9a6b0a; --accent-dim:#fdf3e0;
+  --danger:#d64545; --ok:#1e9e6a;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{font-family:'Vazirmatn',Tahoma,sans-serif;background:var(--bg);color:var(--text);padding:16px 12px 46px;line-height:1.9}
+.wrap{max-width:580px;margin:0 auto}
+.brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:8px}
+.brand b{font-size:15px}
+.chip{font-size:10.5px;font-weight:700;color:var(--accent-dark);background:var(--accent-dim);border:1px solid #f2ddb4;border-radius:20px;padding:3px 10px;white-space:nowrap}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;margin-bottom:12px}
+.state{text-align:center;color:var(--dim);font-size:13.5px;padding:26px 14px}
+.car-name{font-size:16.5px;font-weight:800;margin-bottom:8px}
+.car-year{font-size:12px;color:var(--dim);font-weight:600}
+.plate{display:inline-block;background:#fff;border:1.5px solid #33415c;border-radius:8px;padding:4px 12px;direction:ltr;font-weight:800;font-size:14.5px;letter-spacing:1px;margin:2px 0 12px;font-variant-numeric:tabular-nums}
+.plate .pl-ir{background:#1c3f94;color:#fff;border-radius:4px;padding:1px 7px;margin-right:8px;font-size:12px;font-weight:700;letter-spacing:0}
+.car-stats{display:flex;gap:10px;flex-wrap:wrap}
+.car-stats div{flex:1;min-width:120px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:9px 12px}
+.car-stats span{display:block;font-size:10.5px;color:var(--dim)}
+.car-stats b{font-size:14.5px;font-variant-numeric:tabular-nums;word-break:keep-all}
+.svc-top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.svc-top b{font-size:14px}
+.tag{font-size:10px;color:var(--accent-dark);background:var(--accent-dim);border-radius:14px;padding:2px 9px;font-weight:700;white-space:nowrap}
+.svc-note{font-size:12px;color:var(--dim);margin-top:6px;background:var(--bg);border-radius:10px;padding:7px 11px;line-height:1.9}
+table{width:100%;border-collapse:collapse;margin-top:9px;font-size:12.5px}
+th{font-size:10.5px;color:var(--dim);font-weight:700;text-align:right;border-bottom:1.5px solid var(--border);padding:4px 6px}
+td{padding:7px 6px;border-bottom:1px dashed var(--border);font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:none}
+td.cost,th.cost{white-space:nowrap}
+.meta{text-align:center;color:var(--dim);font-size:11px;margin-top:14px}
+.foot{text-align:center;color:var(--dim);font-size:10.5px;margin-top:18px;line-height:2}
+.print-btn{font-family:inherit;font-size:11px;font-weight:700;color:var(--accent-dark);background:var(--accent-dim);border:1px solid #f2ddb4;border-radius:10px;padding:5px 14px;cursor:pointer;margin-right:6px}
+.retry{font-family:inherit;font-size:12.5px;font-weight:700;color:#fff;background:var(--accent);border:0;border-radius:10px;padding:9px 26px;cursor:pointer;margin-top:14px}
+.total-row td{font-weight:800;border-top:1.5px solid var(--border);border-bottom:none}
+@media print{
+  body{background:#fff;padding:8px}
+  .brand,.foot,.print-btn{display:none}
+  .card{border-color:#ccc;break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><b>🔧 دفترچه سرویس خودرو</b><span class="chip">صفحهٔ فقط-خواندنی — لینک اشتراکی مالک خودرو</span></div>
+  <div id="box"><div class="card state">در حال دریافت تاریخچه…</div></div>
+  <div class="foot">این صفحه از «دفترچه سرویس خودرو» (carservbook.ir) ساخته شده و وضعیتِ لحظهٔ باز کردن را نشان می‌دهد.<button class="print-btn" onclick="window.print()">چاپ</button></div>
+</div>
+<script>
+(function(){
+'use strict';
+function esc(s){
+  return String(s==null?'':s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+var FA='۰۱۲۳۴۵۶۷۸۹';
+function fa(n){ return String(n).replace(/[0-9]/g,function(d){ return FA[+d]; }); }
+function faNum(n){ try{ return fa(Number(n).toLocaleString('en-US')); }catch(e){ return fa(n); } }
+/* تبدیل میلادی→شمسی (الگوریتم عمومی — فقط برای «به‌روزشده») */
+function g2j(gy,gm,gd){
+  var g_d_m=[0,31,59,90,120,151,181,212,243,273,304,334];
+  var jy=(gy<=1600)?0:979; gy-=(gy<=1600)?621:1600;
+  var gy2=(gm>2)?(gy+1):gy;
+  var days=(365*gy)+Math.trunc((gy2+3)/4)-Math.trunc((gy2+99)/100)+Math.trunc((gy2+399)/400)-80+gd+g_d_m[gm-1];
+  jy+=33*Math.trunc(days/12053); days%=12053;
+  jy+=4*Math.trunc(days/1461); days%=1461;
+  if(days>365){ jy+=Math.trunc((days-1)/365); days=(days-1)%365; }
+  var jm=(days<186)?1+Math.trunc(days/31):7+Math.trunc((days-186)/30);
+  var jd=1+((days<186)?(days%31):((days-186)%30));
+  return [jy,jm,jd];
+}
+function jStr(ts){
+  try{
+    var d=new Date(Number(ts));
+    var j=g2j(d.getFullYear(), d.getMonth()+1, d.getDate());
+    return fa(j[0])+'/'+fa(String(j[1]).padStart(2,'0'))+'/'+fa(String(j[2]).padStart(2,'0'));
+  }catch(e){ return '—'; }
+}
+var box=document.getElementById('box');
+function fail(msg){
+  box.innerHTML='<div class="card state">'+esc(msg)+'<br><button class="retry" onclick="location.reload()">تلاش دوباره</button></div>';
+}
+/* کلید از مسیر /s/<کلید> یا ?s= (پشتیبان) */
+var m=location.pathname.match(/^\/s\/([a-f0-9]{32})$/);
+var token=m?m[1]:null;
+if(!token){
+  var q=null;
+  try{ q=new URLSearchParams(location.search).get('s'); }catch(e){}
+  if(q && /^[a-f0-9]{32}$/.test(q)) token=q;
+}
+if(!token){ fail('این لینک معتبر نیست — آن را کامل باز کن (مثلاً از داخل پیامی که برایتان فرستاده شده).'); return; }
+
+var ac8=(typeof AbortController!=='undefined')?new AbortController():null;
+var t8=ac8?setTimeout(function(){ try{ ac8.abort(); }catch(e){} },20000):null;
+fetch('/api/share/'+token, {headers:{'Accept':'application/json'}, signal:(ac8?ac8.signal:undefined)})
+  .then(function(r){ if(t8) clearTimeout(t8); return r.json().catch(function(){ throw new Error('bad'); }); })
+  .then(function(d){
+    if(!d || !d.ok){ fail((d && d.error) || 'این لینک پیدا نشد یا از سمت مالک خودرو حذف شده است.'); return; }
+    render(d.share || {});
+  })
+  .catch(function(){ fail('اتصال برقرار نشد یا خیلی کند بود — چند لحظه بعد دوباره تلاش کن.'); });
+
+function render(sh){
+  var c=sh.car||{}, svcs=Array.isArray(sh.services)?sh.services:[], tot=sh.totals||{};
+  var h='';
+  h+='<div class="card car">'
+    +'<div class="car-name">'+esc([c.name,c.model].filter(Boolean).join(' — ')||'خودرو')+(c.year?' <span class="car-year">('+esc(c.year)+')</span>':'')+'</div>';
+  if(c.plate){
+    h+='<div class="plate">'+fa(c.plate.n1)+' '+esc(c.plate.letter)+' '+fa(c.plate.n2)
+      +'<span class="pl-ir">ایران '+fa(c.plate.region||'‌')+'</span></div>';
+  }
+  h+='<div class="car-stats">'
+    +(c.currentOdo!=null?'<div><span>کیلومتر فعلی</span><b>'+faNum(c.currentOdo)+'</b></div>':'')
+    +'<div><span>رکورد ثبت‌شده</span><b>'+faNum(tot.records||0)+'</b></div>'
+    +'<div><span>مجموع هزینه‌ها</span><b class="cost">'+(tot.totalCost>0?(faNum(tot.totalCost)+' تومان'):'—')+'</b></div>'
+    +'</div></div>';
+  if(!svcs.length){
+    h+='<div class="card state">هنوز سابقهٔ سرویسی برای این خودرو ثبت نشده است.</div>';
+  } else {
+    svcs.forEach(function(s){
+      h+='<div class="card svc">'
+        +'<div class="svc-top"><b>'+esc(s.name)+'</b>'
+        +'<span>'
+        +(s.intervalKm?'<span class="tag">هر '+faNum(s.intervalKm)+' کیلومتر</span> ':'')
+        +(s.intervalDays?'<span class="tag">هر '+faNum(s.intervalDays)+' روز</span>':'')
+        +'</span></div>';
+      if(s.note) h+='<div class="svc-note">'+esc(s.note)+'</div>';
+      h+='<table><thead><tr><th>تاریخ</th><th>کیلومتر</th><th class="cost">هزینه (تومان)</th></tr></thead><tbody>';
+      (s.history||[]).slice().reverse().forEach(function(x){
+        h+='<tr><td>'+fa(x.date)+'</td><td>'+(x.odometer!=null?faNum(x.odometer):'—')+'</td>'
+          +'<td class="cost">'+(x.cost!=null?faNum(x.cost):'—')+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+    });
+  }
+  h+='<div class="meta">به‌روزشده در '+jStr(sh.generatedAt)+' — بازدید از این لینک: '+fa(sh.views||1)+' بار</div>';
+  box.innerHTML=h;
+}
+})();
+</script>
+</body>
+</html>
