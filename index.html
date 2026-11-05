@@ -2452,16 +2452,10 @@ function apiFetch(path, opts){
   var second=(first===API_BASE)?API_FALLBACK_BASE:API_BASE;
   /* [v2.11.14] فیل‌اور سریع برای GET — تایم‌اوت تلاش اول ۸ثانیه (به‌جای ۲۰) تا روی شبکه‌های
      ناسازگار، معطلِ مسیر مرده نمانیم؛ تلاش دوم ۱۵ثانیه. POSTها (نوشتن) مثل قبل ۲۰ثانیه. */
-  // کد جدید (جایگزین کن):
-var isGet=(!opts.method || opts.method==='GET');
-var firstOpts={};
-for(var fk in opts){ firstOpts[fk]=opts[fk]; }
-if(isGet){ 
-    firstOpts.timeoutMs=(path==='/api/data')?30000:8000; 
-} else {
-    // برای POST (ارسال داده)، زمان بیشتری بده تا Worker فرصت پردازش داشته باشد
-    firstOpts.timeoutMs = (path.indexOf('/api/data-chunk') > -1) ? 30000 : 45000;
-}  else {
+  var isGet=(!opts.method || opts.method==='GET');
+  var firstOpts=opts;
+  if(isGet){ firstOpts={}; for(var fk in opts){ firstOpts[fk]=opts[fk]; } /* [v2.11.17] پولِ /api/data می‌تواند مگابایتی باشد — پنجرهٔ بلند */ firstOpts.timeoutMs=(path==='/api/data')?30000:8000; }
+  else {
     // برای ارسال POST (مثل تکه‌های داده) تایم‌اوت ۳۰ ثانیه بذار
     firstOpts={};
     for(var fk in opts){ firstOpts[fk]=opts[fk]; }
