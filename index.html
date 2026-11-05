@@ -2413,7 +2413,7 @@ function pushOkClear(){ try{ localStorage.removeItem(PUSH_OK_KEY); }catch(e){} }
    ریشهٔ «کلی معطلی»: fetch بدون AbortController روی شبکهٔ کند/نیمه‌مرده دقیقه‌ها آویزان می‌ماند
    و کاربر هیچ بازخوردی نمی‌گیرد. حالا بعد از ۲۰ ثانیه درخواست رها می‌شود و خطای TYPEدار
    («TIMEOUT») پرتاب می‌شود تا تماس‌گیرنده‌ها بتوانند پیام درست نشان دهند. */
-var API_TIMEOUT_MS=20000;
+var API_TIMEOUT_MS=45000;
 /* [v2.11.8] یک تلاشِ تک‌مقصدی — همان منطق قبلی apiFetch؛ فقط «base» پارامتر شد و هر تلاش
    AbortController تازه می‌گیرد تا تایم‌اوتِ مسیر اول، مسیر دوم را هم نکشد. */
 function apiFetchVia(base, path, opts){
@@ -2455,6 +2455,12 @@ function apiFetch(path, opts){
   var isGet=(!opts.method || opts.method==='GET');
   var firstOpts=opts;
   if(isGet){ firstOpts={}; for(var fk in opts){ firstOpts[fk]=opts[fk]; } /* [v2.11.17] پولِ /api/data می‌تواند مگابایتی باشد — پنجرهٔ بلند */ firstOpts.timeoutMs=(path==='/api/data')?30000:8000; }
+  else {
+    // برای ارسال POST (مثل تکه‌های داده) تایم‌اوت ۳۰ ثانیه بذار
+    firstOpts={};
+    for(var fk in opts){ firstOpts[fk]=opts[fk]; }
+    firstOpts.timeoutMs = (path.indexOf('/api/data-chunk') > -1) ? 30000 : API_TIMEOUT_MS;
+}
   return apiFetchVia(first, path, firstOpts)['catch'](function(err1){
     var netErr=!!(err1 && (err1.message==='TIMEOUT' || err1.name==='TypeError' || err1.name==='AbortError' || err1.name==='TimeoutError'));
     if(!netErr) throw err1;
