@@ -872,7 +872,7 @@ body{
     location.replace('/share.html?s='+m8[1]);
   }
 })();
-var APP_VERSION='2.11.18';
+var APP_VERSION='2.11.19';
 /* [v2.11.9] FIX N-02 «اپ باز نمی‌شود» سمت کلاینت در sw.js انجام شده (ناوبری cache-first +
    نجات شِل از مسیر پشتیبان). اینجا فقط: خط «مسیر اتصال» در پروفایل تا وضعیت فیلاور قابل دیدن باشد. */
 /* [v2.6.9] پشتیبانی: ایمیل رسمی تماس — در منو/پروفایل/مودال ورود/درباره و مودال اختلال گوگل استفاده می‌شود */
@@ -2528,7 +2528,15 @@ function scheduleCloudSync(){
    ۱) فشرده‌سازی gzip سمت کلاینت (CompressionStream) — حجمِ روی سیم چند برابر کم می‌شود
    ۲) تقسیم به بخش‌های ~۱۸۰KB — هر بخش درخواستی کوچک و مستقلاً قابل تلاش مجدد است
    ۳) دروازهٔ نسخهٔ ورکر: تا ورکر 2.11.14 تأیید نشده، همان مسیر قدیمی (سازگار کامل) */
-var PUSH_CHUNK_SIZE=32*1024, PUSH_GZIP_DIRECT_MAX=40*1024; /* [v2.11.18] تکه‌های کوچک: درخواست بزرگ روی مسیر ناپایدار گیر می‌کرد */
+var PUSH_CHUNK_DEFAULT=12*1024, PUSH_CHUNK_MIN=3*1024, PUSH_CHUNK_MAX=16*1024;
+/* [v2.11.19] روی بعضی شبکه‌های ایران آپلودِ بزرگ‌تر از ~۲۰-۲۵KB با RST قطع می‌شود (اندازه‌گیری واقعی):
+   تکه‌ها کوچک شروع می‌شوند، در شکست نصف می‌شوند و اندازهٔ موفق برای دفعهٔ بعد یادآوری می‌شود */
+function getChunkSize(){
+  try{ var v=parseInt(localStorage.getItem('carlog:chunkSize')||'',10);
+    if(v>=PUSH_CHUNK_MIN && v<=PUSH_CHUNK_MAX) return v; }catch(e){}
+  return PUSH_CHUNK_DEFAULT;
+}
+function saveChunkSize(v){ try{ localStorage.setItem('carlog:chunkSize', String(v)); }catch(e){} }
 function cmpVer(a,b){
   try{
     var pa=String(a).split('.'), pb=String(b).split('.');
@@ -2574,19 +2582,31 @@ function doPushSend(pushBody){
       /* مسیر قدیمی — کامل سازگار با ورکرهای قدیمی */
       return legacy();
     }
-    var p=(gz.length<=PUSH_GZIP_DIRECT_MAX)
-      ? apiFetch('/api/data', {method:'POST', body: gz, timeoutMs:60000, preferBase:pushOkBase(), raw:true})
-      : doPushChunked(gz, pushBody);
-    /* [v2.11.18] اگر مسیر فشرده/تکه‌ای به‌خاطر خطای غیرتایم‌اوت شکست خورد (مثلاً CORS/ورکر قدیمی)،
-       یک‌بار با مسیر قدیمی امتحان می‌شود تا همگام‌سازی کاملاً از کار نیفتد */
+    var cs=getChunkSize();
+    function isHttpErr(err){ return !!(err && err.message && String(err.message).indexOf('HTTP_')===0); }
+    function chunkedWithBackoff(sz){
+      return doPushChunked(gz, pushBody, sz).then(function(res){
+        if(res && res.ok) saveChunkSize(sz);
+        return res;
+      })['catch'](function(err){
+        /* خطای سرور (HTTP_xxx) = تلاش دوباره بی‌فایده؛ قطع/تایم‌اوت = تکه‌های کوچک‌تر */
+        if(isHttpErr(err) || sz<=PUSH_CHUNK_MIN) throw err;
+        return chunkedWithBackoff(Math.max(PUSH_CHUNK_MIN, Math.floor(sz/2)));
+      });
+    }
+    var p=(gz.length<=cs)
+      ? apiFetch('/api/data', {method:'POST', body: gz, timeoutMs:30000, preferBase:pushOkBase(), raw:true})
+      : chunkedWithBackoff(cs);
+    /* مسیر قدیمی فقط برای دادهٔ کوچک (ورکر قدیمی/CORS)؛ برای دادهٔ بزرگ بی‌فایده و کند است */
     return p['catch'](function(err){
-      if(err && err.message==='TIMEOUT') throw err;
-      return legacy();
+      if(jsonStr.length<=20000 && !(err && err.message==='TIMEOUT')) return legacy();
+      throw err;
     });
   });
 }
-function doPushChunked(gz, pushBody){
-  var n=Math.ceil(gz.length/PUSH_CHUNK_SIZE);
+function doPushChunked(gz, pushBody, size){
+  size=size||PUSH_CHUNK_DEFAULT;
+  var n=Math.ceil(gz.length/size);
   var uid=''; try{ uid=(crypto && crypto.randomUUID)?crypto.randomUUID().replace(/-/g,''):String(Date.now())+Math.random().toString(16).slice(2,10); }catch(e0){ uid=String(Date.now()); }
   var cars=(pushBody.data && pushBody.data.cars)?pushBody.data.cars.length:0;
   var i=0;
@@ -2596,7 +2616,7 @@ function doPushChunked(gz, pushBody){
         body: JSON.stringify({uid:uid, n:n, cars:cars, size:gz.length, confirmWipe:!!pushBody.confirmWipe})});
     }
     var idx=i; i++;
-    var part=gz.subarray(idx*PUSH_CHUNK_SIZE, Math.min(gz.length, (idx+1)*PUSH_CHUNK_SIZE));
+    var part=gz.subarray(idx*size, Math.min(gz.length, (idx+1)*size));
     try{ syncChip('busy', 'ارسال بخش '+toFa(idx+1)+' از '+toFa(n)+'…'); }catch(eChip){}
     function sendPart(attempt){
       return apiFetch('/api/data-chunk?uid='+uid+'&i='+idx+'&n='+n, {method:'POST', timeoutMs:30000, preferBase:pushOkBase(), raw:true, body:part})

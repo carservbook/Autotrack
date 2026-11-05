@@ -112,7 +112,7 @@
    - خروج امن + سپر تعویض حساب (پچ L-02 — در index.html)
    - تعارض همگام‌سازی + «آخرین همگام‌سازی موفق» (S-03/S-04 — در index.html)
    ============================================================ */
-var CACHE_NAME = 'car-service-cache-gh10';
+var CACHE_NAME = 'car-service-cache-gh11';
 var STATIC_ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './Vazirmatn-var.woff2'];
 var RETRY_TIMEOUT_MS = 8000;
 var NAV_TIMEOUT_MS = 2500;
