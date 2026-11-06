@@ -829,7 +829,8 @@ body{
 .share-offline-note{background:var(--bg2);border:1px solid var(--border);border-right:3px solid var(--accent);border-radius:10px;padding:10px 12px;font-size:11.5px;color:var(--dim);line-height:1.9;margin-top:8px;}
 /* ---------- [v2.11.5] چیپ وضعیت همگام‌سازی — بازخورد دائم برای کاربر ---------- */
 #syncChip{
-  display:none; position:fixed; bottom:64px; right:12px; z-index:190;
+  /* [v2.11.21] کمی پایین‌تر + فقط داخل پروفایل نمایش داده می‌شود (P13) */
+  display:none; position:fixed; bottom:44px; right:12px; z-index:190;
   align-items:center; gap:6px; max-width:78vw;
   padding:8px 14px; border-radius:999px; font-size:12px; font-weight:600;
   font-family:inherit; direction:rtl;
@@ -843,6 +844,17 @@ body{
 /* [v2.11.7] سطح میانی: کهرباییِ ملایم برای کندیِ موقت — نه قرمزِ هشدار */
 #syncChip.sync-warn{ border-color:#8a6d1f; color:#e8c86a; cursor:pointer; }
 @keyframes syncChipIn{ from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:translateY(0);} }
+/* ---------- [v2.11.21] لایهٔ تایید حذف + نوار برگردان ---------- */
+#confirmOverlay{display:none; position:fixed; inset:0; z-index:150; background:rgba(0,0,0,.6); align-items:center; justify-content:center; padding:22px;}
+.confirm-card{background:var(--card-hi); border:1px solid var(--border); border-radius:16px; padding:18px; max-width:340px; width:100%; box-shadow:0 12px 44px rgba(0,0,0,.5);}
+.confirm-card h3{margin:0 0 6px; font-size:15px;}
+.confirm-card .sub{margin:0 0 4px;}
+.btn.danger{background:#e5484d; border-color:#e5484d; color:#fff;}
+#undoBar{display:none; position:fixed; bottom:64px; left:12px; right:12px; z-index:160; align-items:center; justify-content:space-between; gap:10px; background:#1d232a; color:#e8eaed; border:1px solid #3a424c; border-radius:14px; padding:10px 14px; font-size:12.5px; box-shadow:0 8px 28px rgba(0,0,0,.45); animation:syncChipIn .25s ease;}
+#undoBar .undo-msg{flex:1; line-height:1.8;}
+#undoBar .undo-actions{display:flex; align-items:center; gap:8px; flex-shrink:0;}
+#undoCnt{opacity:.7; font-size:11px; min-width:14px; text-align:center;}
+.undo-btn{background:var(--accent); color:#101418; border:none; border-radius:10px; padding:7px 14px; font-weight:800; font-family:inherit; font-size:12.5px; cursor:pointer;}
 </style>
 </head>
 <body>
@@ -872,7 +884,7 @@ body{
     location.replace('/share.html?s='+m8[1]);
   }
 })();
-var APP_VERSION='2.11.20';
+var APP_VERSION='2.11.21';
 /* [v2.11.9] FIX N-02 «اپ باز نمی‌شود» سمت کلاینت در sw.js انجام شده (ناوبری cache-first +
    نجات شِل از مسیر پشتیبان). اینجا فقط: خط «مسیر اتصال» در پروفایل تا وضعیت فیلاور قابل دیدن باشد. */
 /* [v2.6.9] پشتیبانی: ایمیل رسمی تماس — در منو/پروفایل/مودال ورود/درباره و مودال اختلال گوگل استفاده می‌شود */
@@ -1654,6 +1666,7 @@ function toast(msg){
 /* ---------- Modal helpers ---------- */
 var MODAL_HISTORY_PUSHED=false;
 function openModal(html){
+  try{ window.__PROFILE_OPEN=false; }catch(e){} /* [v2.11.21] مودال جدید = خارج از پروفایل */
   var wasOpen=overlayEl.classList.contains('open');
   modalEl.innerHTML='<div class="handle"></div>'+html;
   overlayEl.classList.add('open');
@@ -1662,6 +1675,7 @@ function openModal(html){
   }
 }
 function closeModal(fromPopstate){
+  try{ window.__PROFILE_OPEN=false; }catch(e){} /* [v2.11.21] */
   overlayEl.classList.remove('open');
   if(MODAL_HISTORY_PUSHED){
     MODAL_HISTORY_PUSHED=false;
@@ -1677,6 +1691,75 @@ if(typeof window!=='undefined' && window.addEventListener){
       closeModal(true);
     }
   });
+}
+
+/* ---------- [v2.11.21] تایید حذف درون‌برنامه‌ای (بدون دیالوگ مرورگر) + نوار برگردان ---------- */
+/* چرا: دیالوگ confirm() مرورگر بالای سوال «آدرس سایت» را نشان می‌دهد و ظاهر اپ را می‌شکند؛
+   این لایهٔ تایید مستقل است، بدون هیچ آدرسی، و روی هر مودالی (مثل فرم ویرایش) بدون
+   نابود کردن محتوای آن باز می‌شود — انصراف یعنی فرم قبلی دست‌نخورده می‌ماند. */
+function askConfirm(o){
+  try{
+    if(typeof document==='undefined') return;
+    var ov=document.getElementById('confirmOverlay');
+    if(!ov){
+      ov=document.createElement('div');
+      ov.id='confirmOverlay';
+      if(document.body) document.body.appendChild(ov);
+    }
+    if(!ov) return;
+    ov.innerHTML='<div class="confirm-card"><h3>'+escapeHtml(o.title||'تایید')+'</h3>'
+      +'<p class="sub">'+(o.text||'')+'</p>'
+      +'<div class="modal-actions"><button type="button" class="btn danger" id="confirmOkBtn">'+escapeHtml(o.okLabel||'حذف')+'</button>'
+      +'<button type="button" class="btn ghost" id="confirmNoBtn">انصراف</button></div></div>';
+    ov.style.display='flex';
+    document.getElementById('confirmOkBtn').onclick=function(){ hideConfirm(); try{ if(o.onOk) o.onOk(); }catch(e){} };
+    document.getElementById('confirmNoBtn').onclick=function(){ hideConfirm(); };
+  }catch(e){}
+}
+function hideConfirm(){
+  try{
+    var ov=document.getElementById('confirmOverlay');
+    if(ov){ ov.style.display='none'; ov.innerHTML=''; }
+  }catch(e){}
+}
+/* نوار «برگردان» — بعد از حذف، ۶ ثانیه شمرده می‌شود؛ لمس «برگردان» آیتم را سر جایش برمی‌گرداند */
+var UNDO_TIMEOUT=null, UNDO_TICKER=null, UNDO_LEFT=0;
+function showUndoBar(msg, restoreFn){
+  try{
+    if(typeof document==='undefined') return;
+    var bar=document.getElementById('undoBar');
+    if(!bar){
+      bar=document.createElement('div');
+      bar.id='undoBar';
+      if(document.body) document.body.appendChild(bar);
+    }
+    if(!bar) return;
+    try{ if(UNDO_TIMEOUT){ clearTimeout(UNDO_TIMEOUT); UNDO_TIMEOUT=null; } if(UNDO_TICKER){ clearInterval(UNDO_TICKER); UNDO_TICKER=null; } }catch(e){}
+    UNDO_LEFT=6;
+    bar.innerHTML='<span class="undo-msg">'+msg+'</span>'
+      +'<span class="undo-actions"><b id="undoCnt">'+toFa(UNDO_LEFT)+'</b>'
+      +'<button type="button" class="undo-btn" id="undoBtn">برگردان</button></span>';
+    bar.style.display='flex';
+    document.getElementById('undoBtn').onclick=function(){
+      hideUndoBar();
+      try{ if(restoreFn) restoreFn(); }catch(e){}
+    };
+    UNDO_TICKER=setInterval(function(){
+      UNDO_LEFT--;
+      var c=document.getElementById('undoCnt');
+      if(c) c.textContent=toFa(Math.max(UNDO_LEFT,0));
+      if(UNDO_LEFT<=0) hideUndoBar();
+    },1000);
+    UNDO_TIMEOUT=setTimeout(function(){ hideUndoBar(); },6300);
+  }catch(e){}
+}
+function hideUndoBar(){
+  try{
+    if(UNDO_TIMEOUT){ clearTimeout(UNDO_TIMEOUT); UNDO_TIMEOUT=null; }
+    if(UNDO_TICKER){ clearInterval(UNDO_TICKER); UNDO_TICKER=null; }
+    var b=document.getElementById('undoBar');
+    if(b) b.style.display='none';
+  }catch(e){}
 }
 
 /* ---------- Odo modal ---------- */
@@ -1922,22 +2005,76 @@ function saveService(serviceId){
   saveState(); closeModal(); renderApp();
 }
 function deleteService(serviceId){
-  if(!confirm('این کار حذف بشه؟')) return;
   var car=activeCar();
-  car.services=car.services.filter(function(x){return x.id!==serviceId;});
-  saveState(); closeModal(); renderApp(); toast('حذف شد');
+  var svc=car.services.find(function(x){return x.id===serviceId;});
+  if(!svc) return;
+  /* [v2.11.21] تایید درون‌برنامه‌ای (دیالوگ مرورگرِ «آدرس‌دار» حذف شد) + نوار برگردان */
+  askConfirm({
+    title:'حذف کار',
+    text:'کار «'+escapeHtml(svc.name)+'» و همهٔ رکوردهای انجام‌شدهٔ آن ('+faNum(svc.history.length)+' رکورد) حذف بشه؟',
+    okLabel:'حذف',
+    onOk:function(){
+      var idx=car.services.indexOf(svc);
+      car.services.splice(idx,1);
+      saveState(); closeModal(); renderApp();
+      showUndoBar('کار «'+escapeHtml(svc.name)+'» حذف شد', function(){
+        if(car.services.indexOf(svc)>=0) return;
+        car.services.splice(Math.min(idx,car.services.length),0,svc);
+        saveState(); renderApp(); toast('برگردانده شد ✓');
+      });
+    }
+  });
 }
 function deleteHistEntry(serviceId, idx){
-  var s=activeCar().services.find(function(x){return x.id===serviceId;});
+  var car=activeCar();
+  var s=car.services.find(function(x){return x.id===serviceId;});
   if(!s) return;
-  s.history.splice(idx,1);
-  saveState(); renderEditForm(s); renderApp();
+  var h=s.history[idx];
+  if(!h) return;
+  /* [v2.11.21] حذف رکورد حالا همیشه اول سوال می‌پرسد + برگردان ۶ ثانیه‌ای */
+  askConfirm({
+    title:'حذف رکورد',
+    text:'رکورد «'+escapeHtml(h.date)+(h.odometer!=null?' — '+faNum(h.odometer)+' کیلومتر':'')+'» حذف بشه؟',
+    okLabel:'حذف',
+    onOk:function(){
+      var entry=s.history.splice(idx,1)[0];
+      saveState(); renderEditForm(s); renderApp();
+      showUndoBar('رکورد حذف شد', function(){
+        if(!entry || car.services.indexOf(s)<0 || s.history.indexOf(entry)>=0) return;
+        s.history.splice(Math.min(idx,s.history.length),0,entry);
+        saveState(); renderEditForm(s); renderApp(); toast('برگردانده شد ✓');
+      });
+    }
+  });
+}
+function deleteHistDoc(serviceId, idx){
+  var car=activeCar();
+  var s=car.services.find(function(x){return x.id===serviceId;});
+  if(!s) return;
+  var h=s.history[idx];
+  if(!h || !h.photo) return;
+  /* [v2.11.21] حذف سند بدون حذف رکورد — با تایید و برگردان */
+  askConfirm({
+    title:'حذف سند',
+    text:'فقط عکس/سند بارگذاری‌شدهٔ این رکورد حذف بشه؟ خودِ رکورد (تاریخ، کیلومتر، هزینه) می‌ماند.',
+    okLabel:'حذف سند',
+    onOk:function(){
+      var photo=h.photo;
+      h.photo=null;
+      saveState(); renderEditForm(s); renderApp(); toast('سند حذف شد');
+      showUndoBar('سند حذف شد — رکورد باقی است', function(){
+        if(!h.photo && car.services.indexOf(s)>=0) h.photo=photo;
+        saveState(); renderEditForm(s); renderApp(); toast('سند برگشت ✓');
+      });
+    }
+  });
 }
 function editHistEntry(serviceId, idx){
   var s=activeCar().services.find(function(x){return x.id===serviceId;});
   if(!s) return;
   var h=s.history[idx];
   if(!h) return;
+  window._editPendingPhoto=null; /* [v2.11.21] */
   var j=parseJalaliStr(h.date)||todayJalali();
   openModal(''
     +'<h2>ویرایش رکورد</h2>'
@@ -1949,8 +2086,24 @@ function editHistEntry(serviceId, idx){
     +'</div></div>'
     +'<div class="field"><label>کیلومتر</label><input type="text" inputmode="numeric" id="ehOdo" value="'+(h.odometer!=null?h.odometer:'')+'"></div>'
     +'<div class="field"><label>هزینه (تومان) — اختیاری</label><input type="text" inputmode="numeric" id="ehCost" value="'+(h.cost||'')+'"></div>'
+    +(h.photo
+      ? '<div class="field"><label>سند بارگذاری‌شده (عکس فاکتور)</label><img src="'+h.photo+'" class="hist-thumb" style="cursor:default"><div class="modal-actions" style="margin-top:6px"><button type="button" class="btn ghost" onclick="deleteHistDoc(\''+serviceId+'\','+idx+')">حذف سند</button></div><p class="sub" style="margin-top:-4px">حذف سند فقط عکس را پاک می‌کند؛ رکورد (تاریخ/کیلومتر/هزینه) می‌ماند.</p></div>'
+      : '<div class="field"><label>عکس فاکتور/سند — اختیاری</label><input type="file" accept="image/*" id="ehPhoto"><div id="ehPhotoPreview"></div></div>')
     +'<div class="modal-actions"><button class="btn primary" onclick="saveHistEdit(\''+serviceId+'\','+idx+')">ذخیره</button><button class="btn ghost" onclick="renderEditForm(activeCar().services.find(function(x){return x.id===\''+serviceId+'\';}))">انصراف</button></div>'
   );
+  /* [v2.11.21] افزودن سند از داخل ویرایش رکورد */
+  var ehP=document.getElementById('ehPhoto');
+  if(ehP){
+    ehP.addEventListener('change', function(e){
+      var f=e.target.files[0];
+      if(!f) return;
+      resizeImageFile(f, 900, 0.6, function(dataUrl){
+        window._editPendingPhoto=dataUrl;
+        var pv=document.getElementById('ehPhotoPreview');
+        if(pv) pv.innerHTML='<img src="'+dataUrl+'" class="photo-thumb-preview">';
+      });
+    });
+  }
 }
 function saveHistEdit(serviceId, idx){
   var s=activeCar().services.find(function(x){return x.id===serviceId;});
@@ -1966,6 +2119,8 @@ function saveHistEdit(serviceId, idx){
   h.date=jalaliStr({jy:jy,jm:jm,jd:jd});
   h.odometer=isNaN(odo)?null:odo;
   h.cost=(cost&&!isNaN(cost))?cost:null;
+  /* [v2.11.21] اعمال سندِ انتخاب‌شده در ویرایش */
+  if(window._editPendingPhoto){ h.photo=window._editPendingPhoto; window._editPendingPhoto=null; }
   s.history.sort(function(a,b){return jalaliKey(parseJalaliStr(a.date))-jalaliKey(parseJalaliStr(b.date));});
   saveState(); renderEditForm(s); renderApp(); toast('ذخیره شد ✓');
 }
@@ -2339,15 +2494,33 @@ function saveCarForm(carId){
   }
 }
 function deleteCar(carId){
-  if(!confirm('این ماشین و همه کارهاش حذف بشه؟')) return;
-  STATE.cars=STATE.cars.filter(function(c){return c.id!==carId;});
-  /* [v2.11.13] حذفِ آگاهانهٔ آخرین خودرو → پوش خالی بعدی با confirmWipe مجاز می‌شود
-     (گارد سرور empty-wipe-guard بدون این مُهر، پوش خالی را با 409 رد می‌کند) */
-  if(!STATE.cars.length){ try{ WIPE_CONFIRM_AT=Date.now(); }catch(e){} }
-  if(STATE.activeCarId===carId){
-    STATE.activeCarId = STATE.cars.length ? STATE.cars[0].id : null;
-  }
-  saveState(); closeModal(); renderApp(); toast('حذف شد');
+  var car=STATE.cars.find(function(c){return c.id===carId;});
+  if(!car) return;
+  /* [v2.11.21] تایید درون‌برنامه‌ای + برگردان */
+  askConfirm({
+    title:'حذف خودرو',
+    text:'ماشین «'+escapeHtml(car.name||'خودرو')+'» و همهٔ کارهاش ('+faNum((car.services||[]).length)+' کار) حذف بشه؟',
+    okLabel:'حذف',
+    onOk:function(){
+      var idx=STATE.cars.indexOf(car);
+      var wasActive=(STATE.activeCarId===carId);
+      STATE.cars.splice(idx,1);
+      /* [v2.11.13] حذفِ آگاهانهٔ آخرین خودرو → پوش خالی بعدی با confirmWipe مجاز می‌شود
+         (گارد سرور empty-wipe-guard بدون این مُهر، پوش خالی را با 409 رد می‌کند) */
+      if(!STATE.cars.length){ try{ WIPE_CONFIRM_AT=Date.now(); }catch(e){} }
+      if(STATE.activeCarId===carId){
+        STATE.activeCarId = STATE.cars.length ? STATE.cars[0].id : null;
+      }
+      saveState(); closeModal(); renderApp();
+      showUndoBar('ماشین «'+escapeHtml(car.name||'خودرو')+'» حذف شد', function(){
+        if(STATE.cars.indexOf(car)>=0) return;
+        STATE.cars.splice(Math.min(idx,STATE.cars.length),0,car);
+        if(wasActive) STATE.activeCarId=carId;
+        if(STATE.cars.length){ try{ WIPE_CONFIRM_AT=0; }catch(e){} }
+        saveState(); renderApp(); toast('برگردانده شد ✓');
+      });
+    }
+  });
 }
 
 /* ---------- Cloud account (optional) — auth + sync with our Cloudflare Worker backend ---------- */
@@ -2413,7 +2586,7 @@ function pushOkClear(){ try{ localStorage.removeItem(PUSH_OK_KEY); }catch(e){} }
    ریشهٔ «کلی معطلی»: fetch بدون AbortController روی شبکهٔ کند/نیمه‌مرده دقیقه‌ها آویزان می‌ماند
    و کاربر هیچ بازخوردی نمی‌گیرد. حالا بعد از ۲۰ ثانیه درخواست رها می‌شود و خطای TYPEدار
    («TIMEOUT») پرتاب می‌شود تا تماس‌گیرنده‌ها بتوانند پیام درست نشان دهند. */
-var API_TIMEOUT_MS=45000;
+var API_TIMEOUT_MS=20000;
 /* [v2.11.8] یک تلاشِ تک‌مقصدی — همان منطق قبلی apiFetch؛ فقط «base» پارامتر شد و هر تلاش
    AbortController تازه می‌گیرد تا تایم‌اوتِ مسیر اول، مسیر دوم را هم نکشد. */
 function apiFetchVia(base, path, opts){
@@ -2455,12 +2628,6 @@ function apiFetch(path, opts){
   var isGet=(!opts.method || opts.method==='GET');
   var firstOpts=opts;
   if(isGet){ firstOpts={}; for(var fk in opts){ firstOpts[fk]=opts[fk]; } /* [v2.11.17] پولِ /api/data می‌تواند مگابایتی باشد — پنجرهٔ بلند */ firstOpts.timeoutMs=(path==='/api/data')?30000:8000; }
-  else {
-    // برای ارسال POST (مثل تکه‌های داده) تایم‌اوت ۳۰ ثانیه بذار
-    firstOpts={};
-    for(var fk in opts){ firstOpts[fk]=opts[fk]; }
-    firstOpts.timeoutMs = (path.indexOf('/api/data-chunk') > -1) ? 30000 : API_TIMEOUT_MS;
-}
   return apiFetchVia(first, path, firstOpts)['catch'](function(err1){
     var netErr=!!(err1 && (err1.message==='TIMEOUT' || err1.name==='TypeError' || err1.name==='AbortError' || err1.name==='TimeoutError'));
     if(!netErr) throw err1;
@@ -2910,6 +3077,11 @@ function retryOutbox(){
   try{ clearTimeout(OUTBOX_RETRY_TIMER); }catch(e){}
   doCloudPush(false, true);
 }
+/* [v2.11.21] چیپ همگام‌سازی (در حال همگام‌سازی / خطا / هشدار / موفق) فقط وقتی دیده می‌شود
+   که کاربر داخل پروفایل باشد؛ آخرین وضعیت نگه داشته می‌شود تا با باز شدن پروفایل همان
+   وضعیت دوباره نمایش داده شود. بقیهٔ صفحات بدون مزاحمتِ چیپ کار می‌کنند. */
+var SYNC_CHIP_LAST={mode:null,text:''};
+function profileOpen(){ try{ return window.__PROFILE_OPEN===true; }catch(e){ return false; } }
 function syncChip(mode, text){
   try{
     if(typeof document==='undefined') return;
@@ -2922,7 +3094,9 @@ function syncChip(mode, text){
       if(document.body) document.body.appendChild(chip);
     }
     if(!chip) return;
-    if(!mode){ chip.style.display='none'; return; }
+    if(!mode){ SYNC_CHIP_LAST.mode=null; SYNC_CHIP_LAST.text=''; chip.style.display='none'; return; }
+    SYNC_CHIP_LAST.mode=mode; SYNC_CHIP_LAST.text=String(text||'');
+    if(!profileOpen()){ chip.style.display='none'; return; }
     chip.style.display='flex';
     chip.className='sync-'+mode;
     chip.innerHTML=text;
@@ -3208,6 +3382,8 @@ function openProfileModal(){
       +'<div class="danger-link" onclick="doLogout()">خروج از حساب</div>'
       +'<div class="danger-link" onclick="confirmDeleteAccount()">حذف کامل حساب کاربری</div>'
     );
+    window.__PROFILE_OPEN=true; /* [v2.11.21] چیپ همگام‌سازی فقط داخل پروفایل */
+    if(SYNC_CHIP_LAST.mode) syncChip(SYNC_CHIP_LAST.mode, SYNC_CHIP_LAST.text);
   } else {
     openModal(''
       +'<h2>ورود یا ساخت حساب</h2>'
@@ -3638,11 +3814,18 @@ function importBackup(){
   reader.readAsText(f);
 }
 function resetAll(){
-  if(!confirm('همه داده‌های همه ماشین‌ها پاک بشه؟ این کار قابل برگشت نیست.')) return;
-  localStorage.removeItem(STORE_KEY);
-  localStorage.removeItem(OLD_STORE_KEY);
-  STATE=buildInitialState();
-  saveState(); closeModal(); renderApp(); toast('پاک شد');
+  /* [v2.11.21] تایید درون‌برنامه‌ای — طبق متن، قابل برگشت نیست (برگردان ندارد) */
+  askConfirm({
+    title:'پاک کردن همهٔ داده‌ها',
+    text:'همه داده‌های همه ماشین‌ها پاک بشه؟ این کار قابل برگشت نیست.',
+    okLabel:'همه پاک شود',
+    onOk:function(){
+      localStorage.removeItem(STORE_KEY);
+      localStorage.removeItem(OLD_STORE_KEY);
+      STATE=buildInitialState();
+      saveState(); closeModal(); renderApp(); toast('پاک شد');
+    }
+  });
 }
 
 /* ---------- Notifications permission ---------- */
@@ -4413,12 +4596,26 @@ function deleteHistoryFromSearch(carId, serviceId, idx){
   var car=findCar(carId); if(!car) return;
   var s=car.services.find(function(x){return x.id===serviceId;}); if(!s) return;
   var h=s.history[idx]; if(!h) return;
-  if(!confirm('حذف رکورد '+h.date+' از «'+s.name+'»؟')) return;
-  s.history.splice(idx,1);
-  saveState();
-  if(STATE.activeCarId===carId) renderApp();
-  renderHistorySearchResults();
-  toast('حذف شد');
+  /* [v2.11.21] تایید درون‌برنامه‌ای (بدون دیالوگ مرورگر) + نوار برگردان */
+  askConfirm({
+    title:'حذف رکورد',
+    text:'رکورد «'+escapeHtml(h.date)+'» از کار «'+escapeHtml(s.name)+'» حذف بشه؟',
+    okLabel:'حذف',
+    onOk:function(){
+      var entry=s.history.splice(idx,1)[0];
+      saveState();
+      if(STATE.activeCarId===carId) renderApp();
+      renderHistorySearchResults();
+      showUndoBar('رکورد حذف شد', function(){
+        if(!entry || car.services.indexOf(s)<0 || s.history.indexOf(entry)>=0) return;
+        s.history.splice(Math.min(idx,s.history.length),0,entry);
+        saveState();
+        if(STATE.activeCarId===carId) renderApp();
+        renderHistorySearchResults();
+        toast('برگردانده شد ✓');
+      });
+    }
+  });
 }
 
 /* ---------- پایان قابلیت‌های v2.8.0 ---------- */
@@ -4548,16 +4745,23 @@ function createShareLink(carId){
   }).catch(function(){ toast('اتصال برقرار نشد — اینترنت را چک کن'); });
 }
 function shareRevokeLink(token, carId){
-  if(!confirm('این لینک حذف شود؟ مکانیک دیگر نمی‌تواند تاریخچه را ببیند.')) return;
-  apiFetch('/api/share/revoke', {method:'POST', body: JSON.stringify({token:token})}).then(function(res){
-    if(res.ok && res.data && res.data.ok){
-      if(SHARE_LAST_CREATED===token) SHARE_LAST_CREATED=null;
-      toast('لینک حذف شد — دسترسی مکانیک قطع شد');
-      openShareView(carId||undefined);
-    } else {
-      toast((res.data&&res.data.error)||'حذف ناموفق بود');
+  /* [v2.11.21] تایید درون‌برنامه‌ای — لغو دسترسی سمت سرور است؛ برگردان ندارد */
+  askConfirm({
+    title:'حذف لینک مکانیک',
+    text:'این لینک حذف شود؟ مکانیک دیگر نمی‌تواند تاریخچه را ببیند.',
+    okLabel:'حذف لینک',
+    onOk:function(){
+      apiFetch('/api/share/revoke', {method:'POST', body: JSON.stringify({token:token})}).then(function(res){
+        if(res.ok && res.data && res.data.ok){
+          if(SHARE_LAST_CREATED===token) SHARE_LAST_CREATED=null;
+          toast('لینک حذف شد — دسترسی مکانیک قطع شد');
+          openShareView(carId||undefined);
+        } else {
+          toast((res.data&&res.data.error)||'حذف ناموفق بود');
+        }
+      }).catch(function(){ toast('اتصال برقرار نشد'); });
     }
-  }).catch(function(){ toast('اتصال برقرار نشد'); });
+  });
 }
 
 /* ---------- پایان قابلیت‌های v2.9.0 ---------- */
